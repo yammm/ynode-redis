@@ -15,11 +15,6 @@ Install the package and its required peer dependency, `redis`.
 ```sh
 npm install @ynode/redis redis
 
-
-## Installation
-
-```sh
-npm install @ynode/redis
 ```
 
 ## Basic Usage
