@@ -26,6 +26,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
+
 import fp from "fastify-plugin";
 
 import { createClient } from "redis";
@@ -49,10 +50,18 @@ async function clientInfo(client) {
     return parsed;
 }
 
-export default fp(async function (fastify, opts) {
-    // const { url, namespace } = opts;
+/**
+ * This plugin adds a "redis" decorator to the Fastify server instance,
+ * allowing for easy access to the Redis client.
+ *
+ * @param {FastifyInstance} fastify The Fastify instance.
+ * @param {object} options Plugin options, directly passed to redis.createClient.
+ * @param {string} [options.name] Optionally set a connection name. Useful for debugging
+ */
+export default fp(async function (fastify, options) {
+    // const { url, namespace } = options;
 
-    const client = createClient(opts);
+    const client = createClient(options);
     let info = {};
 
     if (fastify.redis) {
@@ -67,6 +76,12 @@ export default fp(async function (fastify, opts) {
 
     // Initiating a connection to the Redis server
     client.on("ready", async () => {
+        try { 
+            await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]); 
+        } catch (error) {
+            fastify.log.trace(`Redis CLIENT SETNAME error has occurred:`, error);
+        }
+
         info = await clientInfo(client);
         fastify.log.info(`Redis client is ready to use [${info.id}] redis://${info.addr}`);
     });

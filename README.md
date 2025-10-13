@@ -8,6 +8,16 @@ Copyright (c) 2025 Michael Welter <me@mikinho.com>
 A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin that uses the official 
 [Redis](https://www.npmjs.com/package/redis) library
 
+## Why?
+
+A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for you.
+
+- ✅ Uses the **official** [`redis`](https://www.npmjs.com/package/redis) client (not ioredis)
+- ✅ Clean Fastify integration with proper startup/shutdown hooks
+- ✅ Simple API: `fastify.redis` everywhere in your app
+
+> If you are looking for the ioredis‑based plugin, see [`@fastify/redis`](https://github.com/fastify/fastify-redis).
+
 ## Installation
 
 Install the package and its required peer dependency, `redis`.
