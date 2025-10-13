@@ -1,6 +1,6 @@
 {
     "name": "@ynode/redis",
-    "version": "1.0.0+411251.v1.0.0-3-ge502abf",
+    "version": "1.0.1+411251.v1.0.0-4-g6d5ccb6",
     "description": "A better redis Fastify plugin.",
     "main": "src/plugin.js",
     "type": "module",
