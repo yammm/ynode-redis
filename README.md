@@ -107,6 +107,13 @@ fastify.redis.namespace = "klingon";
 await fastify.redis.set("status", "battle-ready"); // writes "klingon:status"
 ```
 
+If you need to bypass namespacing for specific operations, use `fastify.redis.raw`:
+
+```javascript
+await fastify.redis.raw.get("status"); // reads the literal key "status" (no prefix)
+await fastify.redis.raw.set("status", "manual"); // writes key "status" (no prefix)
+```
+
 ## Options
 
 ### Plugin-specific options

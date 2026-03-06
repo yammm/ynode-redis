@@ -8,6 +8,8 @@ export interface FastifyRedisOptions extends RedisClientOptions {
 
 export interface NamespacedRedisClientType extends RedisClientType {
     namespace?: string;
+    raw: RedisClientType;
+    withoutNamespace<T>(callback: () => T): T;
 }
 
 declare module "fastify" {

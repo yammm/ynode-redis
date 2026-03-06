@@ -12,6 +12,12 @@ function createFakeClient({ commandResponse, isOpen = true } = {}) {
         on(event, handler) {
             listeners.set(event, handler);
         },
+        async get(key) {
+            return this.sendCommand(["GET", key]);
+        },
+        async set(key, value) {
+            return this.sendCommand(["SET", key, value]);
+        },
         async sendCommand(args, options) {
             calls.push({ args, options });
             const command = String(args?.[0] ?? "").toUpperCase();
@@ -59,6 +65,30 @@ test("attachNamespace prefixes command keys and supports runtime namespace updat
     assert.equal(client.namespace, undefined);
     await client.sendCommand(["SET", "counter", "2"]);
     assert.deepEqual(calls[4].args, ["SET", "counter", "2"]);
+});
+
+test("attachNamespace exposes raw and withoutNamespace bypass helpers", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [
+            ["get", 2, ["readonly"], 1, 1, 1],
+            ["set", -3, ["write"], 1, 1, 1],
+        ],
+    });
+
+    attachNamespace(client, "codex");
+
+    await client.set("planet", "mars");
+    await client.raw.set("planet", "earth");
+    await client.withoutNamespace(async () => {
+        await client.get("planet");
+    });
+    await client.get("planet");
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "codex:planet", "mars"]);
+    assert.deepEqual(calls[2].args, ["SET", "planet", "earth"]);
+    assert.deepEqual(calls[3].args, ["GET", "planet"]);
+    assert.deepEqual(calls[4].args, ["GET", "codex:planet"]);
 });
 
 test("attachNamespace falls back to built-in command specs when COMMAND introspection is unavailable", async () => {

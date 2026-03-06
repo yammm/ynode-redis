@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 const DEFAULT_COMMAND_SPECS = new Map([
     ["APPEND", { firstKey: 1, lastKey: 1, step: 1 }],
     ["COPY", { firstKey: 1, lastKey: 2, step: 1 }],
@@ -192,13 +194,43 @@ function applyPrefixToKey(key, prefix) {
     return `${prefix}${keyString}`;
 }
 
+function createRawClientProxy(client, runWithoutNamespace) {
+    const functionCache = new Map();
+
+    return new Proxy(client, {
+        get(target, property, receiver) {
+            if (property === "raw") {
+                return receiver;
+            }
+
+            const value = Reflect.get(target, property, target);
+            if (typeof value !== "function") {
+                return value;
+            }
+
+            if (functionCache.has(property)) {
+                return functionCache.get(property);
+            }
+
+            const wrapped = (...args) => runWithoutNamespace(() => value.apply(target, args));
+            functionCache.set(property, wrapped);
+            return wrapped;
+        },
+    });
+}
+
 export function attachNamespace(client, initialNamespace) {
+    const bypassNamespaceStore = new AsyncLocalStorage();
     const rawSendCommand = client.sendCommand.bind(client);
     let commandSpecs = new Map(DEFAULT_COMMAND_SPECS);
     let loadingSpecsPromise = null;
     let commandSpecsLoaded = false;
     let namespace = normalizeNamespace(initialNamespace);
     let namespacePrefix = namespace ? `${namespace}:` : "";
+
+    function withoutNamespace(callback) {
+        return bypassNamespaceStore.run(true, callback);
+    }
 
     async function loadCommandSpecs() {
         if (commandSpecsLoaded) {
@@ -252,7 +284,8 @@ export function attachNamespace(client, initialNamespace) {
     }
 
     client.sendCommand = async function (args, options) {
-        if (!namespacePrefix) {
+        const bypassNamespace = bypassNamespaceStore.getStore() === true;
+        if (!namespacePrefix || bypassNamespace) {
             return rawSendCommand(args, options);
         }
 
@@ -282,5 +315,17 @@ export function attachNamespace(client, initialNamespace) {
             namespace = normalizeNamespace(value);
             namespacePrefix = namespace ? `${namespace}:` : "";
         },
+    });
+
+    Object.defineProperty(client, "withoutNamespace", {
+        configurable: true,
+        enumerable: false,
+        value: withoutNamespace,
+    });
+
+    Object.defineProperty(client, "raw", {
+        configurable: true,
+        enumerable: false,
+        value: createRawClientProxy(client, withoutNamespace),
     });
 }
