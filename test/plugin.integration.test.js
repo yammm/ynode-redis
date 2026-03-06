@@ -79,6 +79,14 @@ function stopProcess(proc) {
     });
 }
 
+function markClientOpen(client, value = true) {
+    Object.defineProperty(client, "isOpen", {
+        value,
+        configurable: true,
+        writable: true,
+    });
+}
+
 async function getFreePort() {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -229,4 +237,126 @@ test("plugin prevents duplicate registration on the same fastify instance", asyn
     const onClose = hooks.get("onClose");
     assert.equal(typeof onClose, "function");
     await onClose();
+});
+
+test("plugin startup fails fast when Redis is unreachable", async () => {
+    const { fastify, hooks } = createFastifyHarness();
+    await redisPlugin(fastify, {
+        url: "redis://127.0.0.1:1",
+        socket: {
+            connectTimeout: 100,
+            reconnectStrategy: false,
+        },
+    });
+
+    const onReady = hooks.get("onReady");
+    const onClose = hooks.get("onClose");
+
+    assert.equal(typeof onReady, "function");
+    assert.equal(typeof onClose, "function");
+
+    await assert.rejects(async () => {
+        await onReady();
+    });
+
+    await onClose();
+});
+
+test("plugin startup fails when CLIENT INFO is denied", async (t) => {
+    const redis = await startRedis();
+    if (!redis) {
+        t.skip("No REDIS_URL provided or local redis-server cannot be started in this environment");
+        return;
+    }
+    t.after(async () => {
+        await redis.stop();
+    });
+
+    const { fastify, hooks } = createFastifyHarness();
+    await redisPlugin(fastify, { url: redis.url, name: "ynode-redis-info-denied-test" });
+
+    const onReady = hooks.get("onReady");
+    const onClose = hooks.get("onClose");
+
+    assert.equal(typeof onReady, "function");
+    assert.equal(typeof onClose, "function");
+
+    const originalSendCommand = fastify.redis.sendCommand.bind(fastify.redis);
+    fastify.redis.sendCommand = async (args, ...rest) => {
+        if (Array.isArray(args) && args[0] === "CLIENT" && args[1] === "INFO") {
+            const error = new Error("NOPERM test: CLIENT INFO denied");
+            error.code = "NOPERM";
+            throw error;
+        }
+        return originalSendCommand(args, ...rest);
+    };
+
+    await assert.rejects(
+        async () => {
+            await onReady();
+        },
+        /NOPERM/,
+    );
+
+    await onClose();
+});
+
+test("onClose prefers close, then quit, then destroy/disconnect fallbacks", async () => {
+    const scenarios = [
+        { name: "close", expectedMethod: "close", removeMethod: null },
+        { name: "quit", expectedMethod: "quit", removeMethod: "close" },
+        { name: "destroy", expectedMethod: "destroy", removeMethod: "quit" },
+        { name: "disconnect", expectedMethod: "disconnect", removeMethod: "destroy" },
+    ];
+
+    for (const scenario of scenarios) {
+        const { fastify, hooks } = createFastifyHarness();
+        await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
+
+        const onClose = hooks.get("onClose");
+        assert.equal(typeof onClose, "function");
+
+        const calls = {
+            close: 0,
+            quit: 0,
+            destroy: 0,
+            disconnect: 0,
+        };
+
+        markClientOpen(fastify.redis, true);
+        fastify.redis.close = async () => {
+            calls.close += 1;
+        };
+        fastify.redis.quit = async () => {
+            calls.quit += 1;
+        };
+        fastify.redis.destroy = async () => {
+            calls.destroy += 1;
+        };
+        fastify.redis.disconnect = async () => {
+            calls.disconnect += 1;
+        };
+
+        if (scenario.removeMethod === "close") {
+            fastify.redis.close = undefined;
+        } else if (scenario.removeMethod === "quit") {
+            fastify.redis.close = undefined;
+            fastify.redis.quit = undefined;
+        } else if (scenario.removeMethod === "destroy") {
+            fastify.redis.close = undefined;
+            fastify.redis.quit = undefined;
+            fastify.redis.destroy = undefined;
+        }
+
+        await onClose();
+
+        for (const method of Object.keys(calls)) {
+            const expectedCalls = method === scenario.expectedMethod ? 1 : 0;
+            assert.equal(
+                calls[method],
+                expectedCalls,
+                `${scenario.name}: expected ${method} calls to equal ${expectedCalls}`,
+            );
+        }
+    }
 });

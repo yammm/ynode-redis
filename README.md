@@ -101,6 +101,28 @@ library.
 For a full list of available options, please see the
 **[official `node-redis` documentation](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)**.
 
+## TypeScript
+
+This package ships TypeScript declarations, including Fastify instance augmentation for
+`fastify.redis`.
+
+```typescript
+import Fastify from "fastify";
+import fastifyRedis from "@ynode/redis";
+
+const app = Fastify();
+await app.register(fastifyRedis, { url: "redis://localhost:6379" });
+
+await app.redis.set("health", "ok");
+```
+
+## Testing and CI
+
+- `npm test` runs project linting and integration tests.
+- Integration tests use `REDIS_URL` when provided.
+- If `REDIS_URL` is not set, tests try to start a local `redis-server` automatically.
+- CI runs on push and pull request, starts a Redis service, and executes `npm test`.
+
 ## Release
 
 To release a new version, use the included Makefile.
