@@ -58,71 +58,80 @@ async function clientInfo(client) {
  * @param {object} options Plugin options, directly passed to redis.createClient.
  * @param {string} [options.name] Optionally set a connection name. Useful for debugging
  */
-export default fp(async function (fastify, options) {
-    // const { url, namespace } = options;
+export default fp(
+    async function (fastify, options) {
+        // const { url, namespace } = options;
 
-    const client = createClient(options);
-    let info = {};
+        const client = createClient(options);
+        let info = {};
 
-    if (fastify.redis) {
-        throw new Error("@ynode/redis has already been registered");
-    }
-
-    // sharing is caring
-    fastify.decorate("redis", client);
-
-    // Initiating a connection to the Redis server
-    client.on("connect", () => fastify.log.debug(`Initiating a connection to the Redis server`));
-
-    // Initiating a connection to the Redis server
-    client.on("ready", async () => {
-        try { 
-            await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]); 
-        } catch (error) {
-            fastify.log.trace(`Redis CLIENT SETNAME error has occurred:`, error);
+        if (fastify.redis) {
+            throw new Error("@ynode/redis has already been registered");
         }
 
-        info = await clientInfo(client);
-        fastify.log.info(`Redis client is ready to use [${info.id}] redis://${info.addr}`);
-    });
+        // sharing is caring
+        fastify.decorate("redis", client);
 
-    // Connection has been closed (via .disconnect() / .close())
-    client.on("end", () =>
-        fastify.log.info(
-            `Connection to the Redis server has been closed [${info.id}] redis://${info.addr}`,
-        ),
-    );
+        // Initiating a connection to the Redis server
+        client.on("connect", () =>
+            fastify.log.debug(`Initiating a connection to the Redis server`),
+        );
 
-    // Always ensure there is a listener for errors in the client to prevent process crashes due to unhandled errors
-    client.on("error", (error) => fastify.log.error(`Redis client error has occurred:`, error));
+        // Initiating a connection to the Redis server
+        client.on("ready", async () => {
+            try {
+                await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]);
+                info = await clientInfo(client);
+                fastify.log.info(`Redis client is ready to use [${info.id}] redis://${info.addr}`);
+            } catch (error) {
+                fastify.log.trace(`Redis CLIENT SETNAME or INFO error has occurred:`, error);
+            }
+        });
 
-    // Initiating a connection to the Redis server
-    client.on("reconnecting", () =>
-        fastify.log.warn(
-            `Client is trying to reconnect to the Redis server [${info.id}] redis://${info.addr}`,
-        ),
-    );
+        // Connection has been closed (via .disconnect() / .close())
+        client.on("end", () =>
+            fastify.log.info(
+                `Connection to the Redis server has been closed [${info.id}] redis://${info.addr}`,
+            ),
+        );
 
-    fastify.addHook("onReady", async () => {
-        await client.connect();
-        info = await clientInfo(client);
-    });
+        // Always ensure there is a listener for errors in the client to prevent process crashes due to unhandled errors
+        client.on("error", (error) => fastify.log.error(`Redis client error has occurred:`, error));
 
-    fastify.addHook("onClose", async () => {
-        if (!client.isOpen) {
-            return;
-        }
-        fastify.log.debug(`Attempting to close our Redis client [${info.id}] redis://${info.addr}`);
-        // node-redis v5: close(); v4: quit() / disconnect()
-        if (typeof client.close === "function") {
-            await client.close();
-        } else if (typeof client.quit === "function") {
-            await client.quit();
-        } else if (typeof client.destroy === "function" || typeof client.disconnect === "function") {
-            await (client.destroy?.() ?? client.disconnect());
-        }
-    });
-}, {
-    fastify: "5.x",
-    name: "@ynode/redis",
-});
+        // Initiating a connection to the Redis server
+        client.on("reconnecting", () =>
+            fastify.log.warn(
+                `Client is trying to reconnect to the Redis server [${info.id}] redis://${info.addr}`,
+            ),
+        );
+
+        fastify.addHook("onReady", async () => {
+            await client.connect();
+            info = await clientInfo(client);
+        });
+
+        fastify.addHook("onClose", async () => {
+            if (!client.isOpen) {
+                return;
+            }
+            fastify.log.debug(
+                `Attempting to close our Redis client [${info.id}] redis://${info.addr}`,
+            );
+            // node-redis v5: close(); v4: quit() / disconnect()
+            if (typeof client.close === "function") {
+                await client.close();
+            } else if (typeof client.quit === "function") {
+                await client.quit();
+            } else if (
+                typeof client.destroy === "function" ||
+                typeof client.disconnect === "function"
+            ) {
+                await (client.destroy?.() ?? client.disconnect());
+            }
+        });
+    },
+    {
+        fastify: "5.x",
+        name: "@ynode/redis",
+    },
+);

@@ -5,18 +5,21 @@ Copyright (c) 2025 Michael Welter <me@mikinho.com>
 [![npm version](https://img.shields.io/npm/v/@ynode/redis.svg)](https://www.npmjs.com/package/@ynode/redis)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin that uses the official 
+A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin that uses the official
 [Redis](https://www.npmjs.com/package/redis) library
 
 ## Why?
 
-A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for you.
+A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on
+your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for
+you.
 
 - ✅ Uses the **official** [`redis`](https://www.npmjs.com/package/redis) client (not ioredis)
 - ✅ Clean Fastify integration with proper startup/shutdown hooks
 - ✅ Simple API: `fastify.redis` everywhere in your app
 
-> If you are looking for the ioredis‑based plugin, see [`@fastify/redis`](https://github.com/fastify/fastify-redis).
+> If you are looking for the ioredis‑based plugin, see
+> [`@fastify/redis`](https://github.com/fastify/fastify-redis).
 
 ## Installation
 
@@ -40,19 +43,20 @@ if (fastify.argv.redis) {
 
 ## Usage
 
-Register the plugin with your Fastify instance. Any options you provide are passed directly to the underlying `node-redis` `createClient` method.
+Register the plugin with your Fastify instance. Any options you provide are passed directly to the
+underlying `node-redis` `createClient` method.
 
 ```javascript
 import Fastify from "fastify";
 import fastifyRedis from "@ynode/redis";
 
 const fastify = Fastify({
-    logger: true
+    logger: true,
 });
 
 // Register the plugin with options
 fastify.register(fastifyRedis, {
-    url: "redis://localhost:6379"
+    url: "redis://localhost:6379",
 });
 
 // Access the redis client from the fastify instance
@@ -75,9 +79,11 @@ start();
 
 ## Options
 
-This plugin passes all options directly to the `createClient` function from the official `redis` library.
+This plugin passes all options directly to the `createClient` function from the official `redis`
+library.
 
-For a full list of available options, please see the **[official `node-redis` documentation](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)**.
+For a full list of available options, please see the
+**[official `node-redis` documentation](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)**.
 
 ## Release
 
@@ -88,6 +94,7 @@ make release VERSION=1.2.3
 ```
 
 This command will:
+
 1.  Check that `npm` and `package.json` exist.
 2.  Run `npm version` to update `package.json` and create a git tag.
 3.  Publish the package to npm.
