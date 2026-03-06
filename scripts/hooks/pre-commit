@@ -26,4 +26,4 @@
 # Git pre-commit hook
 #
 
-npx eslint --no-warn-ignored $(git diff --cached --name-only --diff-filter=ACMRTUXB | tr '\n' ' ')
+npm run lint:staged

@@ -3,6 +3,7 @@
     "version": "1.0.3+92997.v1.0.3-1-g9cde26d",
     "description": "A better redis Fastify plugin.",
     "main": "src/plugin.js",
+    "types": "src/index.d.ts",
     "type": "module",
     "license": "MIT",
     "author": "Michael Welter <me@mikinho.com>",
@@ -31,6 +32,7 @@
         "eslint-plugin-prettier": "^5.5.4",
         "globals": "^16.4.0",
         "prettier": "^3.6.2",
+        "redis": "^5.8.3",
         "rimraf": "^6.0.1",
         "yuidocjs": "^0.10.2"
     },
@@ -41,11 +43,13 @@
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "lint": "eslint .",
+        "lint:staged": "eslint --no-warn-ignored $(git diff --cached --name-only --diff-filter=ACMRTUXB | tr '\\n' ' ')",
         "lint:fix": "eslint . --fix",
+        "test:integration": "node --test test/**/*.integration.test.js",
         "ver:preview": "npx autover --no-amend --dry-run --short",
         "ver:apply": "npx autover --guard-unchanged --short",
-        "test": "eslint --no-warn-ignored $(git diff --cached --name-only --diff-filter=ACMRTUXB | tr '\\n' ' ')",
-        "prepublishOnly": "npm test || true",
+        "test": "npm run lint && npm run test:integration",
+        "prepublishOnly": "npm test",
         "postversion": "git push && git push --tags"
     },
     "publishConfig": {
@@ -59,7 +63,7 @@
     "dependencies": {
         "fastify-plugin": "^5.1.0"
     },
-    "peerDependency": {
+    "peerDependencies": {
         "redis": "^5.8.3"
     }
 }

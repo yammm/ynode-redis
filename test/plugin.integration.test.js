@@ -1,0 +1,232 @@
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import net from "node:net";
+import { test } from "node:test";
+
+import redisPlugin from "../src/plugin.js";
+
+function createFastifyHarness() {
+    const hooks = new Map();
+
+    const fastify = {
+        log: {
+            debug: () => {},
+            info: () => {},
+            warn: () => {},
+            error: () => {},
+            trace: () => {},
+        },
+        hasDecorator(name) {
+            return Object.prototype.hasOwnProperty.call(this, name);
+        },
+        decorate(name, value) {
+            this[name] = value;
+        },
+        addHook(name, handler) {
+            hooks.set(name, handler);
+        },
+    };
+
+    return { fastify, hooks };
+}
+
+function hasRedisServerBinary() {
+    const result = spawnSync("redis-server", ["--version"], { stdio: "ignore" });
+    return result.status === 0;
+}
+
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function canConnectTcp(port, host = "127.0.0.1") {
+    return new Promise((resolve) => {
+        const socket = net.createConnection({ host, port });
+        socket.setTimeout(250);
+
+        socket.once("connect", () => {
+            socket.destroy();
+            resolve(true);
+        });
+
+        socket.once("error", () => {
+            resolve(false);
+        });
+
+        socket.once("timeout", () => {
+            socket.destroy();
+            resolve(false);
+        });
+    });
+}
+
+function stopProcess(proc) {
+    if (!proc || proc.exitCode !== null) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        const hardKillTimer = setTimeout(() => {
+            proc.kill("SIGKILL");
+        }, 2000);
+
+        proc.once("exit", () => {
+            clearTimeout(hardKillTimer);
+            resolve();
+        });
+
+        proc.kill("SIGTERM");
+    });
+}
+
+async function getFreePort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+            const address = server.address();
+            if (!address || typeof address === "string") {
+                reject(new Error("Unable to allocate a TCP port"));
+                return;
+            }
+            server.close((error) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve(address.port);
+            });
+        });
+    });
+}
+
+async function startRedis() {
+    if (process.env.REDIS_URL) {
+        return {
+            url: process.env.REDIS_URL,
+            stop: async () => {},
+        };
+    }
+
+    if (!hasRedisServerBinary()) {
+        return null;
+    }
+
+    let port;
+    try {
+        port = await getFreePort();
+    } catch (error) {
+        if (error && (error.code === "EPERM" || error.code === "EACCES")) {
+            return null;
+        }
+        throw error;
+    }
+
+    const proc = spawn("redis-server", [
+        "--save",
+        "",
+        "--appendonly",
+        "no",
+        "--port",
+        String(port),
+        "--bind",
+        "127.0.0.1",
+    ]);
+
+    const startupTimeoutMs = 5000;
+    const startupDeadline = Date.now() + startupTimeoutMs;
+    let ready = false;
+
+    while (Date.now() < startupDeadline) {
+        if (proc.exitCode !== null) {
+            break;
+        }
+        if (await canConnectTcp(port)) {
+            ready = true;
+            break;
+        }
+        await delay(100);
+    }
+
+    if (!ready) {
+        await stopProcess(proc);
+        throw new Error(`redis-server failed to start within ${startupTimeoutMs}ms`);
+    }
+
+    return {
+        url: `redis://127.0.0.1:${port}`,
+        stop: async () => {
+            await stopProcess(proc);
+        },
+    };
+}
+
+async function waitForAssertion(assertion, timeoutMs = 2000) {
+    const deadline = Date.now() + timeoutMs;
+    let lastError;
+
+    while (Date.now() < deadline) {
+        try {
+            await assertion();
+            return;
+        } catch (error) {
+            lastError = error;
+            await delay(50);
+        }
+    }
+
+    throw lastError ?? new Error("Timed out waiting for assertion");
+}
+
+test("plugin connects to Redis and supports command round trips", async (t) => {
+    const redis = await startRedis();
+    if (!redis) {
+        t.skip("No REDIS_URL provided or local redis-server cannot be started in this environment");
+        return;
+    }
+    t.after(async () => {
+        await redis.stop();
+    });
+
+    const { fastify, hooks } = createFastifyHarness();
+    await redisPlugin(fastify, { url: redis.url, name: "ynode-redis-integration-test" });
+
+    const onReady = hooks.get("onReady");
+    const onClose = hooks.get("onClose");
+
+    assert.equal(typeof onReady, "function");
+    assert.equal(typeof onClose, "function");
+
+    await onReady();
+
+    const key = `ynode-redis:test:${Date.now()}`;
+    await fastify.redis.set(key, "ok");
+    const value = await fastify.redis.get(key);
+    assert.equal(value, "ok");
+
+    await waitForAssertion(async () => {
+        const info = await fastify.redis.sendCommand(["CLIENT", "INFO"]);
+        assert.match(info, /\bname=ynode-redis-integration-test\b/);
+    });
+
+    await onClose();
+    assert.equal(fastify.redis.isOpen, false);
+});
+
+test("plugin prevents duplicate registration on the same fastify instance", async () => {
+    const { fastify, hooks } = createFastifyHarness();
+
+    await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
+
+    await assert.rejects(
+        async () => {
+            await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
+        },
+        /already been registered/,
+    );
+
+    const onClose = hooks.get("onClose");
+    assert.equal(typeof onClose, "function");
+    await onClose();
+});

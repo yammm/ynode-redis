@@ -50,6 +50,24 @@ async function clientInfo(client) {
     return parsed;
 }
 
+function hasRedisDecorator(fastify) {
+    if (typeof fastify.hasDecorator === "function") {
+        return fastify.hasDecorator("redis");
+    }
+    return Object.prototype.hasOwnProperty.call(fastify, "redis");
+}
+
+function connectionLabel(info, options) {
+    const id = info?.id ?? "unknown";
+    const rawAddress = info?.addr ?? options?.url ?? "unknown";
+    const address =
+        typeof rawAddress === "string" && rawAddress.includes("://")
+            ? rawAddress
+            : `redis://${rawAddress}`;
+
+    return `[${id}] ${address}`;
+}
+
 /**
  * This plugin adds a "redis" decorator to the Fastify server instance,
  * allowing for easy access to the Redis client.
@@ -63,9 +81,9 @@ export default fp(
         // const { url, namespace } = options;
 
         const client = createClient(options);
-        let info = {};
+        let info;
 
-        if (fastify.redis) {
+        if (hasRedisDecorator(fastify)) {
             throw new Error("@ynode/redis has already been registered");
         }
 
@@ -82,7 +100,7 @@ export default fp(
             try {
                 await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]);
                 info = await clientInfo(client);
-                fastify.log.info(`Redis client is ready to use [${info.id}] redis://${info.addr}`);
+                fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
             } catch (error) {
                 fastify.log.trace(`Redis CLIENT SETNAME or INFO error has occurred:`, error);
             }
@@ -91,7 +109,7 @@ export default fp(
         // Connection has been closed (via .disconnect() / .close())
         client.on("end", () =>
             fastify.log.info(
-                `Connection to the Redis server has been closed [${info.id}] redis://${info.addr}`,
+                `Connection to the Redis server has been closed ${connectionLabel(info, options)}`,
             ),
         );
 
@@ -101,7 +119,7 @@ export default fp(
         // Initiating a connection to the Redis server
         client.on("reconnecting", () =>
             fastify.log.warn(
-                `Client is trying to reconnect to the Redis server [${info.id}] redis://${info.addr}`,
+                `Client is trying to reconnect to the Redis server ${connectionLabel(info, options)}`,
             ),
         );
 
@@ -115,7 +133,7 @@ export default fp(
                 return;
             }
             fastify.log.debug(
-                `Attempting to close our Redis client [${info.id}] redis://${info.addr}`,
+                `Attempting to close our Redis client ${connectionLabel(info, options)}`,
             );
             // node-redis v5: close(); v4: quit() / disconnect()
             if (typeof client.close === "function") {

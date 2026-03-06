@@ -1,0 +1,37 @@
+name: ci
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+        services:
+            redis:
+                image: redis:8-alpine
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping || exit 1"
+                    --health-interval 5s
+                    --health-timeout 3s
+                    --health-retries 20
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "20"
+                  cache: npm
+
+            - name: Install deps
+              run: npm ci
+
+            - name: Run lint and tests
+              run: npm test
+              env:
+                  REDIS_URL: redis://127.0.0.1:6379
