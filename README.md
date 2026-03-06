@@ -27,7 +27,6 @@ Install the package and its required peer dependency, `redis`.
 
 ```sh
 npm install @ynode/redis redis
-
 ```
 
 ## Basic Usage
@@ -77,9 +76,26 @@ const start = async () => {
 start();
 ```
 
+## Connection Lifecycle
+
+This plugin manages Redis connection lifecycle using Fastify hooks:
+
+- Connects during Fastify startup (`onReady`)
+- Closes the Redis client during Fastify shutdown (`onClose`)
+
+Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()`
+rejects and the server will not start.
+
 ## Options
 
-This plugin passes all options directly to the `createClient` function from the official `redis`
+### Plugin-specific options
+
+- `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`.
+  Default: `@ynode/redis`
+
+### Redis client options
+
+All other options are passed directly to the `createClient` function from the official `redis`
 library.
 
 For a full list of available options, please see the
@@ -102,4 +118,4 @@ This command will:
 
 ## License
 
-This project is licensed under the [MIT Lisence](./LICENSE).
+This project is licensed under the [MIT License](./LICENSE).
