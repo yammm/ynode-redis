@@ -212,6 +212,18 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     fastify.redis.namespace = "codex:";
     assert.equal(fastify.redis.namespace, "codex");
 
+    const readiness = fastify.redis.readiness();
+    assert.equal(readiness.isOpen, true);
+    assert.equal(readiness.isReady, true);
+    assert.equal(readiness.namespace, "codex");
+
+    const health = await fastify.redis.healthcheck();
+    assert.equal(health.ok, true);
+    assert.equal(health.ping, "PONG");
+    assert.equal(health.isOpen, true);
+    assert.equal(health.isReady, true);
+    assert.equal(health.namespace, "codex");
+
     await fastify.redis.set(key, "ok");
     const value = await fastify.redis.get(key);
     assert.equal(value, "ok");

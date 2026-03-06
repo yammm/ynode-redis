@@ -31,6 +31,7 @@ import fp from "fastify-plugin";
 
 import { createClient } from "redis";
 import { assertRedisNotRegistered } from "./guard.js";
+import { attachHealth } from "./health.js";
 import { attachLifecycle } from "./lifecycle.js";
 import { attachNamespace } from "./namespace.js";
 
@@ -50,6 +51,7 @@ export default fp(
         assertRedisNotRegistered(fastify);
 
         attachNamespace(client, namespace);
+        attachHealth(client);
 
         // sharing is caring
         fastify.decorate("redis", client);

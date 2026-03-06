@@ -114,6 +114,21 @@ await fastify.redis.raw.get("status"); // reads the literal key "status" (no pre
 await fastify.redis.raw.set("status", "manual"); // writes key "status" (no prefix)
 ```
 
+## Health and Readiness
+
+This plugin exposes simple probe helpers:
+
+- `fastify.redis.readiness()`: lightweight state snapshot
+- `fastify.redis.healthcheck()`: ping-based health check that never throws
+
+```javascript
+const readiness = fastify.redis.readiness();
+// { isOpen: true, isReady: true, namespace: "codex" }
+
+const health = await fastify.redis.healthcheck();
+// { ok: true, ping: "PONG", latencyMs: 1, isOpen: true, isReady: true, namespace: "codex" }
+```
+
 ## Options
 
 ### Plugin-specific options
