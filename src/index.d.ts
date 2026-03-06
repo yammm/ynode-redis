@@ -3,11 +3,16 @@ import type { RedisClientOptions, RedisClientType } from "redis";
 
 export interface FastifyRedisOptions extends RedisClientOptions {
     name?: string;
+    namespace?: string;
+}
+
+export interface NamespacedRedisClientType extends RedisClientType {
+    namespace?: string;
 }
 
 declare module "fastify" {
     interface FastifyInstance {
-        redis: RedisClientType;
+        redis: NamespacedRedisClientType;
     }
 }
 

@@ -86,12 +86,35 @@ This plugin manages Redis connection lifecycle using Fastify hooks:
 Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()`
 rejects and the server will not start.
 
+## Key Namespacing
+
+You can set a namespace prefix so key-based Redis commands automatically use `<namespace>:<key>`.
+
+```javascript
+await fastify.register(fastifyRedis, {
+    url: "redis://localhost:6379",
+    namespace: "codex",
+});
+
+await fastify.redis.set("status", "online"); // writes "codex:status"
+await fastify.redis.get("status"); // reads "codex:status"
+```
+
+Namespace can also be changed at runtime:
+
+```javascript
+fastify.redis.namespace = "klingon";
+await fastify.redis.set("status", "battle-ready"); // writes "klingon:status"
+```
+
 ## Options
 
 ### Plugin-specific options
 
 - `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`.
   Default: `@ynode/redis`
+- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys.
+  Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
 
 ### Redis client options
 
@@ -118,7 +141,7 @@ await app.redis.set("health", "ok");
 
 ## Testing and CI
 
-- `npm test` runs project linting and integration tests.
+- `npm test` runs project linting, unit tests, and integration tests.
 - Integration tests use `REDIS_URL` when provided.
 - If `REDIS_URL` is not set, tests try to start a local `redis-server` automatically.
 - CI runs on push and pull request, starts a Redis service, and executes `npm test`.

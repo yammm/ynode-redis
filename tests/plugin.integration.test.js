@@ -209,9 +209,16 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     await onReady();
 
     const key = `ynode-redis:test:${Date.now()}`;
+    fastify.redis.namespace = "codex:";
+    assert.equal(fastify.redis.namespace, "codex");
+
     await fastify.redis.set(key, "ok");
     const value = await fastify.redis.get(key);
     assert.equal(value, "ok");
+
+    fastify.redis.namespace = undefined;
+    assert.equal(await fastify.redis.get(key), null);
+    assert.equal(await fastify.redis.get(`codex:${key}`), "ok");
 
     await waitForAssertion(async () => {
         const info = await fastify.redis.sendCommand(["CLIENT", "INFO"]);

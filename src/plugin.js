@@ -30,43 +30,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 import fp from "fastify-plugin";
 
 import { createClient } from "redis";
-
-async function clientInfo(client) {
-    const info = await client.sendCommand(["CLIENT", "INFO"]);
-
-    // Remove only trailing \n or \\n
-    const cleaned = info.replace(/(?:\\n|\n)$/, "");
-
-    const parsed = Object.fromEntries(
-        cleaned
-            .trim()
-            .split(/\s+/)
-            .map((pair) => {
-                const [key, ...rest] = pair.split("=");
-                return [key, rest.join("=")];
-            }),
-    );
-
-    return parsed;
-}
-
-function hasRedisDecorator(fastify) {
-    if (typeof fastify.hasDecorator === "function") {
-        return fastify.hasDecorator("redis");
-    }
-    return Object.prototype.hasOwnProperty.call(fastify, "redis");
-}
-
-function connectionLabel(info, options) {
-    const id = info?.id ?? "unknown";
-    const rawAddress = info?.addr ?? options?.url ?? "unknown";
-    const address =
-        typeof rawAddress === "string" && rawAddress.includes("://")
-            ? rawAddress
-            : `redis://${rawAddress}`;
-
-    return `[${id}] ${address}`;
-}
+import { assertRedisNotRegistered } from "./guard.js";
+import { attachLifecycle } from "./lifecycle.js";
+import { attachNamespace } from "./namespace.js";
 
 /**
  * This plugin adds a "redis" decorator to the Fastify server instance,
@@ -75,78 +41,19 @@ function connectionLabel(info, options) {
  * @param {FastifyInstance} fastify The Fastify instance.
  * @param {object} options Plugin options, directly passed to redis.createClient.
  * @param {string} [options.name] Optionally set a connection name. Useful for debugging
+ * @param {string} [options.namespace] Optional key namespace prefix for Redis key commands
  */
 export default fp(
     async function (fastify, options) {
-        // const { url, namespace } = options;
+        const { namespace, ...clientOptions } = options ?? {};
+        const client = createClient(clientOptions);
+        assertRedisNotRegistered(fastify);
 
-        const client = createClient(options);
-        let info;
-
-        if (hasRedisDecorator(fastify)) {
-            throw new Error("@ynode/redis has already been registered");
-        }
+        attachNamespace(client, namespace);
 
         // sharing is caring
         fastify.decorate("redis", client);
-
-        // Initiating a connection to the Redis server
-        client.on("connect", () =>
-            fastify.log.debug(`Initiating a connection to the Redis server`),
-        );
-
-        // Initiating a connection to the Redis server
-        client.on("ready", async () => {
-            try {
-                await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]);
-                info = await clientInfo(client);
-                fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
-            } catch (error) {
-                fastify.log.trace(`Redis CLIENT SETNAME or INFO error has occurred:`, error);
-            }
-        });
-
-        // Connection has been closed (via .disconnect() / .close())
-        client.on("end", () =>
-            fastify.log.info(
-                `Connection to the Redis server has been closed ${connectionLabel(info, options)}`,
-            ),
-        );
-
-        // Always ensure there is a listener for errors in the client to prevent process crashes due to unhandled errors
-        client.on("error", (error) => fastify.log.error(`Redis client error has occurred:`, error));
-
-        // Initiating a connection to the Redis server
-        client.on("reconnecting", () =>
-            fastify.log.warn(
-                `Client is trying to reconnect to the Redis server ${connectionLabel(info, options)}`,
-            ),
-        );
-
-        fastify.addHook("onReady", async () => {
-            await client.connect();
-            info = await clientInfo(client);
-        });
-
-        fastify.addHook("onClose", async () => {
-            if (!client.isOpen) {
-                return;
-            }
-            fastify.log.debug(
-                `Attempting to close our Redis client ${connectionLabel(info, options)}`,
-            );
-            // node-redis v5: close(); v4: quit() / disconnect()
-            if (typeof client.close === "function") {
-                await client.close();
-            } else if (typeof client.quit === "function") {
-                await client.quit();
-            } else if (
-                typeof client.destroy === "function" ||
-                typeof client.disconnect === "function"
-            ) {
-                await (client.destroy?.() ?? client.disconnect());
-            }
-        });
+        attachLifecycle(fastify, client, options);
     },
     {
         fastify: "5.x",
