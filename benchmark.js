@@ -1,4 +1,5 @@
 import fastify from "fastify";
+
 import redisPlugin from "./src/plugin.js";
 
 async function runBenchmark() {
@@ -59,14 +60,14 @@ async function runBenchmark() {
     console.log(`NS GET: ${nsGetTime.toFixed(2)}ms (${(ITERATIONS / (nsGetTime / 1000)).toFixed(0)} ops/sec)`);
 
     // Cleanup and exit
-    const t6 = performance.now();
+    performance.now();
     const pipeline = client.raw.multi();
     for (let i = 0; i < ITERATIONS; i++) {
         pipeline.del(`raw-key-${i}`);
         pipeline.del(`tenant-abc:ns-key-${i}`);
     }
     await pipeline.execAsPipeline();
-    const t7 = performance.now();
+    performance.now();
 
     console.log(`\nSummary:`);
     console.log(`SET Overhead: ${((nsSetTime - rawSetTime) / rawSetTime * 100).toFixed(2)}% (+${(nsSetTime - rawSetTime).toFixed(2)}ms)`);
