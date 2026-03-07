@@ -2,16 +2,13 @@
 
 Copyright (c) 2025 Michael Welter <me@mikinho.com>
 
-[![npm version](https://img.shields.io/npm/v/@ynode/redis.svg)](https://www.npmjs.com/package/@ynode/redis)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![npm version](https://img.shields.io/npm/v/@ynode/redis.svg)](https://www.npmjs.com/package/@ynode/redis) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin that uses the official
-[Redis](https://www.npmjs.com/package/redis) library
+A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin that uses the official [Redis](https://www.npmjs.com/package/redis) library
 
 ## Why?
 
-A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on your Fastify instance
-and handles connection lifecycle (connect → ready → reconnect → close) for you.
+A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for you.
 
 - ✅ Uses the **official** [`redis`](https://www.npmjs.com/package/redis) client (not ioredis)
 - ✅ Clean Fastify integration with proper startup/shutdown hooks
@@ -40,8 +37,7 @@ if (fastify.argv.redis) {
 
 ## Usage
 
-Register the plugin with your Fastify instance. Any options you provide are passed directly to the underlying
-`node-redis` `createClient` method.
+Register the plugin with your Fastify instance. Any options you provide are passed directly to the underlying `node-redis` `createClient` method.
 
 ```javascript
 import Fastify from "fastify";
@@ -81,13 +77,11 @@ This plugin manages Redis connection lifecycle using Fastify hooks:
 - Connects during Fastify startup (`onReady`)
 - Closes the Redis client during Fastify shutdown (`onClose`)
 
-Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()` rejects and the
-server will not start.
+Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()` rejects and the server will not start.
 
 ## Key Namespacing
 
-Use `withNamespace(namespace)` as the default, concurrency-safe way to scope keys. It returns a scoped client view
-without mutating global `fastify.redis.namespace`.
+Use `withNamespace(namespace)` as the default, concurrency-safe way to scope keys. It returns a scoped client view without mutating global `fastify.redis.namespace`.
 
 ```javascript
 await fastify.register(fastifyRedis, {
@@ -117,8 +111,7 @@ fastify.redis.namespace = "klingon";
 await fastify.redis.set("status", "battle-ready"); // writes "klingon:status"
 ```
 
-If future `node-redis` internals change in a way that prevents safe namespace interception, this plugin now fails fast
-at startup with `REDIS_NAMESPACE_INCOMPATIBLE_CLIENT` instead of silently writing unprefixed keys.
+If future `node-redis` internals change in a way that prevents safe namespace interception, this plugin now fails fast at startup with `REDIS_NAMESPACE_INCOMPATIBLE_CLIENT` instead of silently writing unprefixed keys.
 
 To bypass namespacing for specific operations, use `raw` (works for base and scoped clients):
 
@@ -168,15 +161,13 @@ const health = await fastify.redis.healthcheck();
 ### Plugin-specific options
 
 - `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`. Default: `@ynode/redis`
-- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. Example: `namespace: "codex"`
-  prefixes keys as `codex:<key>`.
+- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
 
 ### Redis client options
 
 All other options are passed directly to the `createClient` function from the official `redis` library.
 
-For a full list of available options, please see the
-**[official `node-redis` documentation](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)**.
+For a full list of available options, please see the **[official `node-redis` documentation](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)**.
 
 ## TypeScript
 
