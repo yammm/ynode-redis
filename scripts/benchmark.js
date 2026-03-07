@@ -1,6 +1,7 @@
+#!/usr/bin/env node
 import fastify from "fastify";
 
-import redisPlugin from "./src/plugin.js";
+import redisPlugin from "../src/plugin.js";
 
 async function runBenchmark() {
     const app = fastify();

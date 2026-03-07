@@ -39,7 +39,7 @@
         "rimraf": "^6.0.1"
     },
     "scripts": {
-        "benchmark": "node benchmark.js",
+        "benchmark": "./scripts/benchmark.js",
         "changelog": "auto-changelog -p",
         "docs": "node scripts/gen-docs.mjs",
         "docs:clean": "rimraf docs || rmdir /s /q docs 2> NUL || true",
