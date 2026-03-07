@@ -53,7 +53,7 @@
         "test:integration": "node --test tests/**/*.integration.test.js",
         "ver:preview": "npx autover --no-amend --dry-run --short",
         "ver:apply": "npx autover --guard-unchanged --short",
-        "test": "npm run test:unit && npm run test:integration",
+        "test": "node --test",
         "prepublishOnly": "npm run lint && npm test",
         "postversion": "git push && git push --tags"
     },
