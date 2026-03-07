@@ -321,8 +321,7 @@ function createRawClientProxy(client, runWithoutNamespace) {
 export function attachNamespace(client, initialNamespace) {
     const bypassNamespaceStore = new AsyncLocalStorage();
     const scopedNamespaceStore = new AsyncLocalStorage();
-    const internalClient =
-        client && typeof client._self === "object" && client._self !== null ? client._self : null;
+    const internalClient = client && typeof client._self === "object" && client._self !== null ? client._self : null;
     const rawClientSendCommand = client.sendCommand.bind(client);
     const rawInternalSendCommand =
         internalClient && typeof internalClient.sendCommand === "function"
@@ -335,7 +334,8 @@ export function attachNamespace(client, initialNamespace) {
     let namespacePrefix = namespace ? `${namespace}:` : "";
     const scopedClientCache = new Map();
     const rawExecuteMulti = typeof client._executeMulti === "function" ? client._executeMulti.bind(client) : null;
-    const rawExecutePipeline = typeof client._executePipeline === "function" ? client._executePipeline.bind(client) : null;
+    const rawExecutePipeline =
+        typeof client._executePipeline === "function" ? client._executePipeline.bind(client) : null;
     const originalMULTI = typeof client.MULTI === "function" ? client.MULTI.bind(client) : null;
     const originalMulti = typeof client.multi === "function" ? client.multi.bind(client) : null;
 

@@ -21,9 +21,7 @@ export function attachLifecycle(fastify, client, options) {
 
     // Connection has been closed (via .disconnect() / .close())
     client.on("end", () =>
-        fastify.log.info(
-            `Connection to the Redis server has been closed ${connectionLabel(info, options)}`,
-        ),
+        fastify.log.info(`Connection to the Redis server has been closed ${connectionLabel(info, options)}`),
     );
 
     // Always ensure there is a listener for errors in the client to prevent process crashes due to unhandled errors
@@ -31,9 +29,7 @@ export function attachLifecycle(fastify, client, options) {
 
     // Initiating a connection to the Redis server
     client.on("reconnecting", () =>
-        fastify.log.warn(
-            `Client is trying to reconnect to the Redis server ${connectionLabel(info, options)}`,
-        ),
+        fastify.log.warn(`Client is trying to reconnect to the Redis server ${connectionLabel(info, options)}`),
     );
 
     fastify.addHook("onReady", async () => {

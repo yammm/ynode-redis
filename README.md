@@ -10,16 +10,14 @@ A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin th
 
 ## Why?
 
-A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on
-your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for
-you.
+A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on your Fastify instance
+and handles connection lifecycle (connect → ready → reconnect → close) for you.
 
 - ✅ Uses the **official** [`redis`](https://www.npmjs.com/package/redis) client (not ioredis)
 - ✅ Clean Fastify integration with proper startup/shutdown hooks
 - ✅ Simple API: `fastify.redis` everywhere in your app
 
-> If you are looking for the ioredis‑based plugin, see
-> [`@fastify/redis`](https://github.com/fastify/fastify-redis).
+> If you are looking for the ioredis‑based plugin, see [`@fastify/redis`](https://github.com/fastify/fastify-redis).
 
 ## Installation
 
@@ -42,8 +40,8 @@ if (fastify.argv.redis) {
 
 ## Usage
 
-Register the plugin with your Fastify instance. Any options you provide are passed directly to the
-underlying `node-redis` `createClient` method.
+Register the plugin with your Fastify instance. Any options you provide are passed directly to the underlying
+`node-redis` `createClient` method.
 
 ```javascript
 import Fastify from "fastify";
@@ -83,12 +81,13 @@ This plugin manages Redis connection lifecycle using Fastify hooks:
 - Connects during Fastify startup (`onReady`)
 - Closes the Redis client during Fastify shutdown (`onClose`)
 
-Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()`
-rejects and the server will not start.
+Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()` rejects and the
+server will not start.
 
 ## Key Namespacing
 
-Use `withNamespace(namespace)` as the default, concurrency-safe way to scope keys. It returns a scoped client view without mutating global `fastify.redis.namespace`.
+Use `withNamespace(namespace)` as the default, concurrency-safe way to scope keys. It returns a scoped client view
+without mutating global `fastify.redis.namespace`.
 
 ```javascript
 await fastify.register(fastifyRedis, {
@@ -165,23 +164,20 @@ const health = await fastify.redis.healthcheck();
 
 ### Plugin-specific options
 
-- `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`.
-  Default: `@ynode/redis`
-- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys.
-  Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
+- `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`. Default: `@ynode/redis`
+- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. Example: `namespace: "codex"`
+  prefixes keys as `codex:<key>`.
 
 ### Redis client options
 
-All other options are passed directly to the `createClient` function from the official `redis`
-library.
+All other options are passed directly to the `createClient` function from the official `redis` library.
 
 For a full list of available options, please see the
 **[official `node-redis` documentation](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)**.
 
 ## TypeScript
 
-This package ships TypeScript declarations, including Fastify instance augmentation for
-`fastify.redis`.
+This package ships TypeScript declarations, including Fastify instance augmentation for `fastify.redis`.
 
 ```typescript
 import Fastify from "fastify";

@@ -28,8 +28,8 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 import fp from "fastify-plugin";
-
 import { createClient } from "redis";
+
 import { assertRedisNotRegistered } from "./guard.js";
 import { attachHealth } from "./health.js";
 import { attachLifecycle } from "./lifecycle.js";

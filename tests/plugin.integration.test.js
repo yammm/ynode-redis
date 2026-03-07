@@ -303,12 +303,9 @@ test("plugin prevents duplicate registration on the same fastify instance", asyn
 
     await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
 
-    await assert.rejects(
-        async () => {
-            await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
-        },
-        /already been registered/,
-    );
+    await assert.rejects(async () => {
+        await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
+    }, /already been registered/);
 
     const onClose = hooks.get("onClose");
     assert.equal(typeof onClose, "function");
@@ -367,12 +364,9 @@ test("plugin startup fails when CLIENT INFO is denied", async (t) => {
         return originalSendCommand(args, ...rest);
     };
 
-    await assert.rejects(
-        async () => {
-            await onReady();
-        },
-        /NOPERM/,
-    );
+    await assert.rejects(async () => {
+        await onReady();
+    }, /NOPERM/);
 
     await onClose();
 });
