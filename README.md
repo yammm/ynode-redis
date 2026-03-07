@@ -117,6 +117,9 @@ fastify.redis.namespace = "klingon";
 await fastify.redis.set("status", "battle-ready"); // writes "klingon:status"
 ```
 
+If future `node-redis` internals change in a way that prevents safe namespace interception, this plugin now fails fast
+at startup with `REDIS_NAMESPACE_INCOMPATIBLE_CLIENT` instead of silently writing unprefixed keys.
+
 To bypass namespacing for specific operations, use `raw` (works for base and scoped clients):
 
 ```javascript

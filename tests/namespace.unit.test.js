@@ -130,6 +130,95 @@ function createSelfRoutedFakeClient({ commandResponse, isOpen = true } = {}) {
     return { client, calls, listeners };
 }
 
+function createPublicMultiOnlyFakeClient({ commandResponse, isOpen = true } = {}) {
+    const listeners = new Map();
+    const calls = [];
+
+    class FakePublicMulti {
+        constructor(sender) {
+            this.sender = sender;
+            this.queue = [];
+        }
+
+        addCommand(args) {
+            this.queue.push(args);
+            return this;
+        }
+
+        set(key, value) {
+            return this.addCommand(["SET", key, value]);
+        }
+
+        get(key) {
+            return this.addCommand(["GET", key]);
+        }
+
+        async exec() {
+            const replies = [];
+            for (const args of this.queue) {
+                replies.push(await this.sender(args));
+            }
+            return replies;
+        }
+
+        execAsPipeline() {
+            return this.exec();
+        }
+    }
+
+    const client = {
+        isOpen,
+        on(event, handler) {
+            listeners.set(event, handler);
+        },
+        async get(key) {
+            return this.sendCommand(["GET", key]);
+        },
+        async set(key, value) {
+            return this.sendCommand(["SET", key, value]);
+        },
+        MULTI() {
+            return new FakePublicMulti((args) => this.sendCommand(args));
+        },
+        multi() {
+            return this.MULTI();
+        },
+        async sendCommand(args, options) {
+            calls.push({ args, options });
+            const command = String(args?.[0] ?? "").toUpperCase();
+
+            if (command === "COMMAND") {
+                if (commandResponse instanceof Error) {
+                    throw commandResponse;
+                }
+                return commandResponse ?? [];
+            }
+
+            return { args, options };
+        },
+    };
+
+    return { client, calls, listeners };
+}
+
+function createUnsupportedDispatchFakeClient() {
+    const listeners = new Map();
+    const internalClient = {};
+
+    const client = {
+        isOpen: true,
+        _self: internalClient,
+        on(event, handler) {
+            listeners.set(event, handler);
+        },
+        async sendCommand(args, options) {
+            return { args, options };
+        },
+    };
+
+    return { client, listeners };
+}
+
 test("attachNamespace prefixes command keys and supports runtime namespace updates", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [
@@ -159,6 +248,24 @@ test("attachNamespace prefixes command keys and supports runtime namespace updat
     assert.equal(client.namespace, undefined);
     await client.sendCommand(["SET", "counter", "2"]);
     assert.deepEqual(calls[4].args, ["SET", "counter", "2"]);
+});
+
+test("attachNamespace prefixes generated command methods routed through public sendCommand", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [
+            ["get", 2, ["readonly"], 1, 1, 1],
+            ["set", -3, ["write"], 1, 1, 1],
+        ],
+    });
+
+    attachNamespace(client, "codex");
+
+    await client.set("planet", "earth");
+    await client.get("planet");
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "codex:planet", "earth"]);
+    assert.deepEqual(calls[2].args, ["GET", "codex:planet"]);
 });
 
 test("attachNamespace exposes raw and withoutNamespace bypass helpers", async () => {
@@ -323,6 +430,32 @@ test("withNamespace applies scoped context to multi exec and execAsPipeline", as
     assert.equal(client.namespace, "global");
 });
 
+test("withNamespace multi prefixes keys without relying on _execute* internals", async () => {
+    const { client, calls } = createPublicMultiOnlyFakeClient({
+        commandResponse: [
+            ["get", 2, ["readonly"], 1, 1, 1],
+            ["set", -3, ["write"], 1, 1, 1],
+        ],
+    });
+
+    attachNamespace(client, "global");
+    const scoped = client.withNamespace("alpha");
+    const transaction = scoped.multi();
+
+    transaction.set("planet", "mars").get("planet");
+    await transaction.exec();
+
+    const rawTransaction = scoped.raw.multi();
+    rawTransaction.set("planet", "earth").get("planet");
+    await rawTransaction.execAsPipeline();
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "alpha:planet", "mars"]);
+    assert.deepEqual(calls[2].args, ["GET", "alpha:planet"]);
+    assert.deepEqual(calls[3].args, ["SET", "planet", "earth"]);
+    assert.deepEqual(calls[4].args, ["GET", "planet"]);
+});
+
 test("raw multi bypasses namespace prefixes", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [
@@ -397,6 +530,20 @@ test("withNamespace prefixes commands that route through _self.sendCommand", asy
     assert.deepEqual(calls[1].args, ["SET", "alpha:planet", "mars"]);
     assert.deepEqual(calls[2].args, ["SET", "beta:planet", "earth"]);
     assert.equal(client.namespace, "global");
+});
+
+test("attachNamespace fails fast for unsupported internal command dispatch", () => {
+    const { client } = createUnsupportedDispatchFakeClient();
+
+    assert.throws(
+        () => {
+            attachNamespace(client, "codex");
+        },
+        (error) =>
+            error instanceof Error &&
+            error.code === "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT" &&
+            /incompatible/.test(error.message),
+    );
 });
 
 test("attachNamespace falls back to built-in command specs when COMMAND introspection is unavailable", async () => {
