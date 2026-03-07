@@ -43,6 +43,7 @@ import { attachNamespace } from "./namespace.js";
  * @param {object} options Plugin options, directly passed to redis.createClient.
  * @param {string} [options.name] Optionally set a connection name. Useful for debugging
  * @param {string} [options.namespace] Optional key namespace prefix for Redis key commands
+ * @param {number} [options.startupTimeout=10000] Startup timeout in milliseconds. Set to 0 to disable.
  */
 export default fp(
     async function (fastify, options) {

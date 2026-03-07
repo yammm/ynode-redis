@@ -335,6 +335,55 @@ test("plugin startup fails fast when Redis is unreachable", async () => {
     await onClose();
 });
 
+test("plugin startup times out when connect does not resolve", async () => {
+    const { fastify, hooks } = createFastifyHarness();
+    await redisPlugin(fastify, {
+        url: "redis://127.0.0.1:6379",
+        startupTimeout: 50,
+    });
+
+    const onReady = hooks.get("onReady");
+    const onClose = hooks.get("onClose");
+
+    assert.equal(typeof onReady, "function");
+    assert.equal(typeof onClose, "function");
+
+    let destroyCalls = 0;
+    fastify.redis.connect = async () => new Promise(() => {});
+    fastify.redis.destroy = () => {
+        destroyCalls += 1;
+        markClientOpen(fastify.redis, false);
+    };
+
+    await assert.rejects(
+        async () => {
+            await onReady();
+        },
+        (error) => {
+            assert.equal(error?.code, "REDIS_STARTUP_TIMEOUT");
+            assert.match(error?.message ?? "", /Redis startup timed out after 50ms/);
+            return true;
+        },
+    );
+
+    assert.equal(destroyCalls, 1);
+    await onClose();
+});
+
+test("plugin rejects invalid startupTimeout values", async () => {
+    const { fastify } = createFastifyHarness();
+
+    await assert.rejects(
+        async () => {
+            await redisPlugin(fastify, {
+                url: "redis://127.0.0.1:6379",
+                startupTimeout: -1,
+            });
+        },
+        /startupTimeout must be a non-negative number in milliseconds/,
+    );
+});
+
 test("plugin startup fails when CLIENT INFO is denied", async (t) => {
     const redis = await startRedis();
     if (!redis) {

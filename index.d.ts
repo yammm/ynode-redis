@@ -4,6 +4,7 @@ import type { RedisClientOptions, RedisClientType } from "redis";
 export interface FastifyRedisOptions extends RedisClientOptions {
     name?: string;
     namespace?: string;
+    startupTimeout?: number;
 }
 
 export interface RedisReadinessStatus {
