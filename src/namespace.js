@@ -194,6 +194,53 @@ function applyPrefixToKey(key, prefix) {
     return `${prefix}${keyString}`;
 }
 
+function createScopedNamespaceProxy({
+    client,
+    scopedNamespace,
+    getWithNamespace,
+    getRawClient,
+    withoutNamespace,
+    runWithScopedNamespace,
+}) {
+    const functionCache = new Map();
+
+    return new Proxy(client, {
+        get(target, property) {
+            if (property === "namespace") {
+                return scopedNamespace || undefined;
+            }
+            if (property === "withNamespace") {
+                return getWithNamespace;
+            }
+            if (property === "raw") {
+                return getRawClient();
+            }
+            if (property === "withoutNamespace") {
+                return withoutNamespace;
+            }
+
+            const value = Reflect.get(target, property, target);
+            if (typeof value !== "function") {
+                return value;
+            }
+
+            if (functionCache.has(property)) {
+                return functionCache.get(property);
+            }
+
+            const wrapped = (...args) => runWithScopedNamespace(() => value.apply(target, args));
+            functionCache.set(property, wrapped);
+            return wrapped;
+        },
+        set(target, property, value) {
+            if (property === "namespace") {
+                throw new TypeError("Cannot assign namespace on scoped client. Use withNamespace().");
+            }
+            return Reflect.set(target, property, value, target);
+        },
+    });
+}
+
 function createRawClientProxy(client, runWithoutNamespace) {
     const functionCache = new Map();
 
@@ -221,15 +268,23 @@ function createRawClientProxy(client, runWithoutNamespace) {
 
 export function attachNamespace(client, initialNamespace) {
     const bypassNamespaceStore = new AsyncLocalStorage();
+    const scopedNamespaceStore = new AsyncLocalStorage();
     const rawSendCommand = client.sendCommand.bind(client);
     let commandSpecs = new Map(DEFAULT_COMMAND_SPECS);
     let loadingSpecsPromise = null;
     let commandSpecsLoaded = false;
     let namespace = normalizeNamespace(initialNamespace);
     let namespacePrefix = namespace ? `${namespace}:` : "";
+    const scopedClientCache = new Map();
 
     function withoutNamespace(callback) {
         return bypassNamespaceStore.run(true, callback);
+    }
+
+    const rawClientProxy = createRawClientProxy(client, withoutNamespace);
+
+    function runWithScopedNamespace(prefix, callback) {
+        return scopedNamespaceStore.run({ prefix }, callback);
     }
 
     async function loadCommandSpecs() {
@@ -259,8 +314,8 @@ export function attachNamespace(client, initialNamespace) {
         loadingSpecsPromise = null;
     }
 
-    function namespacedArgs(args) {
-        if (!Array.isArray(args) || !namespacePrefix || args.length === 0) {
+    function namespacedArgs(args, activePrefix) {
+        if (!Array.isArray(args) || !activePrefix || args.length === 0) {
             return args;
         }
 
@@ -277,15 +332,43 @@ export function attachNamespace(client, initialNamespace) {
 
         const rewrittenArgs = [...args];
         for (const index of keyIndexes) {
-            rewrittenArgs[index] = applyPrefixToKey(rewrittenArgs[index], namespacePrefix);
+            rewrittenArgs[index] = applyPrefixToKey(rewrittenArgs[index], activePrefix);
         }
 
         return rewrittenArgs;
     }
 
+    function withNamespace(nextNamespace) {
+        const normalizedNamespace = normalizeNamespace(nextNamespace);
+        const scopedPrefix = normalizedNamespace ? `${normalizedNamespace}:` : "";
+        const cacheKey = scopedPrefix;
+
+        if (scopedClientCache.has(cacheKey)) {
+            return scopedClientCache.get(cacheKey);
+        }
+
+        const scopedClient = createScopedNamespaceProxy({
+            client,
+            scopedNamespace: normalizedNamespace,
+            getWithNamespace: withNamespace,
+            getRawClient: () => rawClientProxy,
+            withoutNamespace,
+            runWithScopedNamespace: (callback) => runWithScopedNamespace(scopedPrefix, callback),
+        });
+
+        scopedClientCache.set(cacheKey, scopedClient);
+        return scopedClient;
+    }
+
     client.sendCommand = async function (args, options) {
         const bypassNamespace = bypassNamespaceStore.getStore() === true;
-        if (!namespacePrefix || bypassNamespace) {
+        if (bypassNamespace) {
+            return rawSendCommand(args, options);
+        }
+
+        const scopedNamespace = scopedNamespaceStore.getStore();
+        const activePrefix = scopedNamespace ? scopedNamespace.prefix : namespacePrefix;
+        if (!activePrefix) {
             return rawSendCommand(args, options);
         }
 
@@ -293,7 +376,7 @@ export function attachNamespace(client, initialNamespace) {
             await loadCommandSpecs();
         }
 
-        return rawSendCommand(namespacedArgs(args), options);
+        return rawSendCommand(namespacedArgs(args, activePrefix), options);
     };
 
     if (typeof client.on === "function") {
@@ -323,9 +406,15 @@ export function attachNamespace(client, initialNamespace) {
         value: withoutNamespace,
     });
 
+    Object.defineProperty(client, "withNamespace", {
+        configurable: true,
+        enumerable: false,
+        value: withNamespace,
+    });
+
     Object.defineProperty(client, "raw", {
         configurable: true,
         enumerable: false,
-        value: createRawClientProxy(client, withoutNamespace),
+        value: rawClientProxy,
     });
 }

@@ -28,6 +28,7 @@ export interface RedisHealthcheckResult extends RedisReadinessStatus {
 export interface NamespacedRedisClientType extends RedisClientType {
     namespace?: string;
     raw: RedisClientType;
+    withNamespace(namespace?: string): NamespacedRedisClientType;
     withoutNamespace<T>(callback: () => T): T;
     readiness(): RedisReadinessStatus;
     healthcheck(): Promise<RedisHealthcheckResult>;

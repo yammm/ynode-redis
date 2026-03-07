@@ -209,20 +209,36 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     await onReady();
 
     const key = `ynode-redis:test:${Date.now()}`;
-    fastify.redis.namespace = "codex:";
-    assert.equal(fastify.redis.namespace, "codex");
+    const logicalSharedKey = `${key}:shared`;
+
+    assert.equal(fastify.redis.namespace, undefined);
 
     const readiness = fastify.redis.readiness();
     assert.equal(readiness.isOpen, true);
     assert.equal(readiness.isReady, true);
-    assert.equal(readiness.namespace, "codex");
+    assert.equal(readiness.namespace, undefined);
 
     const health = await fastify.redis.healthcheck();
     assert.equal(health.ok, true);
     assert.equal(health.ping, "PONG");
     assert.equal(health.isOpen, true);
     assert.equal(health.isReady, true);
-    assert.equal(health.namespace, "codex");
+    assert.equal(health.namespace, undefined);
+
+    const tenantA = fastify.redis.withNamespace("alpha");
+    const tenantB = fastify.redis.withNamespace("beta");
+
+    await tenantA.set(logicalSharedKey, "a");
+    await tenantB.set(logicalSharedKey, "b");
+
+    assert.equal(await tenantA.get(logicalSharedKey), "a");
+    assert.equal(await tenantB.get(logicalSharedKey), "b");
+    assert.equal(await fastify.redis.raw.get(`alpha:${logicalSharedKey}`), "a");
+    assert.equal(await fastify.redis.raw.get(`beta:${logicalSharedKey}`), "b");
+    assert.equal(fastify.redis.namespace, undefined);
+
+    fastify.redis.namespace = "codex:";
+    assert.equal(fastify.redis.namespace, "codex");
 
     await fastify.redis.set(key, "ok");
     const value = await fastify.redis.get(key);

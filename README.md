@@ -88,30 +88,44 @@ rejects and the server will not start.
 
 ## Key Namespacing
 
-You can set a namespace prefix so key-based Redis commands automatically use `<namespace>:<key>`.
+Use `withNamespace(namespace)` as the default, concurrency-safe way to scope keys. It returns a scoped client view without mutating global `fastify.redis.namespace`.
 
 ```javascript
 await fastify.register(fastifyRedis, {
     url: "redis://localhost:6379",
-    namespace: "codex",
 });
 
-await fastify.redis.set("status", "online"); // writes "codex:status"
-await fastify.redis.get("status"); // reads "codex:status"
+const tenantRedis = fastify.redis.withNamespace("codex");
+
+await tenantRedis.set("status", "online"); // writes "codex:status"
+await tenantRedis.get("status"); // reads "codex:status"
 ```
 
-Namespace can also be changed at runtime:
+Scoped clients can safely coexist:
+
+```javascript
+const tenantA = fastify.redis.withNamespace("alpha");
+const tenantB = fastify.redis.withNamespace("beta");
+
+await tenantA.set("counter", "1"); // alpha:counter
+await tenantB.set("counter", "1"); // beta:counter
+```
+
+The mutable `fastify.redis.namespace` property is still supported for backward compatibility:
 
 ```javascript
 fastify.redis.namespace = "klingon";
 await fastify.redis.set("status", "battle-ready"); // writes "klingon:status"
 ```
 
-If you need to bypass namespacing for specific operations, use `fastify.redis.raw`:
+To bypass namespacing for specific operations, use `raw` (works for base and scoped clients):
 
 ```javascript
 await fastify.redis.raw.get("status"); // reads the literal key "status" (no prefix)
 await fastify.redis.raw.set("status", "manual"); // writes key "status" (no prefix)
+
+const tenantRedis = fastify.redis.withNamespace("codex");
+await tenantRedis.raw.get("status"); // still unprefixed
 ```
 
 ## Health and Readiness

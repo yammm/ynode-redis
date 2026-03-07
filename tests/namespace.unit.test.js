@@ -91,6 +91,95 @@ test("attachNamespace exposes raw and withoutNamespace bypass helpers", async ()
     assert.deepEqual(calls[4].args, ["GET", "codex:planet"]);
 });
 
+test("withNamespace scopes key prefixes without mutating global namespace", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [
+            ["get", 2, ["readonly"], 1, 1, 1],
+            ["set", -3, ["write"], 1, 1, 1],
+        ],
+    });
+
+    attachNamespace(client, "global");
+
+    const tenantA = client.withNamespace("alpha");
+    const tenantB = client.withNamespace("beta");
+    const tenantBAgain = tenantA.withNamespace("beta");
+
+    assert.equal(client.namespace, "global");
+    assert.equal(tenantA.namespace, "alpha");
+    assert.equal(tenantB.namespace, "beta");
+    assert.equal(tenantB, tenantBAgain);
+    assert.equal(tenantA, client.withNamespace("alpha"));
+
+    await tenantA.set("shared-key", "one");
+    await tenantB.set("shared-key", "two");
+    await client.set("shared-key", "base");
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "alpha:shared-key", "one"]);
+    assert.deepEqual(calls[2].args, ["SET", "beta:shared-key", "two"]);
+    assert.deepEqual(calls[3].args, ["SET", "global:shared-key", "base"]);
+    assert.equal(client.namespace, "global");
+});
+
+test("withNamespace normalizes namespace input and supports unscoped clients", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+
+    const normalized = client.withNamespace("romulan:");
+    const unscopedEmpty = client.withNamespace("");
+    const unscopedUndefined = client.withNamespace(undefined);
+
+    assert.equal(normalized.namespace, "romulan");
+    assert.equal(unscopedEmpty.namespace, undefined);
+    assert.equal(unscopedUndefined.namespace, undefined);
+    assert.equal(unscopedEmpty, unscopedUndefined);
+
+    await normalized.get("status");
+    await unscopedEmpty.get("status");
+    await unscopedUndefined.get("health");
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["GET", "romulan:status"]);
+    assert.deepEqual(calls[2].args, ["GET", "status"]);
+    assert.deepEqual(calls[3].args, ["GET", "health"]);
+    assert.equal(client.namespace, "global");
+});
+
+test("scoped clients keep raw and withoutNamespace unprefixed and reject namespace assignment", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const scoped = client.withNamespace("codex");
+
+    assert.equal(scoped.namespace, "codex");
+    assert.throws(
+        () => {
+            scoped.namespace = "klingon";
+        },
+        {
+            name: "TypeError",
+            message: "Cannot assign namespace on scoped client. Use withNamespace().",
+        },
+    );
+
+    await scoped.get("status");
+    await scoped.raw.get("status");
+    await scoped.withoutNamespace(async () => {
+        await scoped.get("status");
+    });
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["GET", "codex:status"]);
+    assert.deepEqual(calls[2].args, ["GET", "status"]);
+    assert.deepEqual(calls[3].args, ["GET", "status"]);
+});
+
 test("attachNamespace falls back to built-in command specs when COMMAND introspection is unavailable", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: new Error("NOPERM"),
