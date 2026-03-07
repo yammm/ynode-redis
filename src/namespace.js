@@ -91,6 +91,7 @@ const DEFAULT_COMMAND_SPECS = new Map([
 ]);
 
 const DYNAMIC_KEY_COUNT_COMMANDS = new Set(["EVAL", "EVAL_RO", "EVALSHA", "EVALSHA_RO", "FCALL", "FCALL_RO"]);
+const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 
 function normalizeNamespace(value) {
     if (value === undefined || value === null) {
@@ -502,7 +503,11 @@ export function attachNamespace(client, initialNamespace) {
         const cacheKey = scopedPrefix;
 
         if (scopedClientCache.has(cacheKey)) {
-            return scopedClientCache.get(cacheKey);
+            const cachedScopedClient = scopedClientCache.get(cacheKey);
+            // Refresh insertion order so the cache behaves as LRU.
+            scopedClientCache.delete(cacheKey);
+            scopedClientCache.set(cacheKey, cachedScopedClient);
+            return cachedScopedClient;
         }
 
         const scopedClient = createScopedNamespaceProxy({
@@ -513,6 +518,13 @@ export function attachNamespace(client, initialNamespace) {
             withoutNamespace,
             runWithScopedNamespace: (callback) => runWithScopedNamespace(scopedPrefix, callback),
         });
+
+        if (scopedClientCache.size >= MAX_SCOPED_NAMESPACE_CACHE_SIZE) {
+            const oldestKey = scopedClientCache.keys().next().value;
+            if (oldestKey !== undefined) {
+                scopedClientCache.delete(oldestKey);
+            }
+        }
 
         scopedClientCache.set(cacheKey, scopedClient);
         return scopedClient;

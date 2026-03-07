@@ -243,6 +243,28 @@ test("withNamespace normalizes namespace input and supports unscoped clients", a
     assert.equal(client.namespace, "global");
 });
 
+test("withNamespace cache evicts least recently used scoped clients", () => {
+    const { client } = createFakeClient();
+    const scopedCacheLimit = 256;
+
+    attachNamespace(client, "global");
+
+    const namespaceZero = client.withNamespace("ns-0");
+    const namespaceOne = client.withNamespace("ns-1");
+
+    for (let index = 2; index < scopedCacheLimit; index += 1) {
+        client.withNamespace(`ns-${index}`);
+    }
+
+    assert.equal(namespaceZero, client.withNamespace("ns-0"));
+
+    client.withNamespace(`ns-${scopedCacheLimit}`);
+
+    const namespaceOneAgain = client.withNamespace("ns-1");
+    assert.notEqual(namespaceOneAgain, namespaceOne);
+    assert.equal(namespaceZero, client.withNamespace("ns-0"));
+});
+
 test("scoped clients keep raw and withoutNamespace unprefixed and reject namespace assignment", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
