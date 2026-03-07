@@ -321,7 +321,13 @@ function createRawClientProxy(client, runWithoutNamespace) {
 export function attachNamespace(client, initialNamespace) {
     const bypassNamespaceStore = new AsyncLocalStorage();
     const scopedNamespaceStore = new AsyncLocalStorage();
-    const rawSendCommand = client.sendCommand.bind(client);
+    const internalClient =
+        client && typeof client._self === "object" && client._self !== null ? client._self : null;
+    const rawClientSendCommand = client.sendCommand.bind(client);
+    const rawInternalSendCommand =
+        internalClient && typeof internalClient.sendCommand === "function"
+            ? internalClient.sendCommand.bind(internalClient)
+            : rawClientSendCommand;
     let commandSpecs = new Map(DEFAULT_COMMAND_SPECS);
     let loadingSpecsPromise = null;
     let commandSpecsLoaded = false;
@@ -368,9 +374,55 @@ export function attachNamespace(client, initialNamespace) {
         return callback();
     }
 
+    function activePrefixForInvocationContext(invocationContext) {
+        if (invocationContext.bypass) {
+            return "";
+        }
+
+        if (invocationContext.scopedPrefix !== undefined) {
+            return invocationContext.scopedPrefix;
+        }
+
+        return namespacePrefix;
+    }
+
+    async function namespacedMultiCommands(commands, activePrefix) {
+        if (!Array.isArray(commands) || commands.length === 0 || !activePrefix) {
+            return commands;
+        }
+
+        if (client.isOpen) {
+            await loadCommandSpecs();
+        }
+
+        let changed = false;
+        const rewrittenCommands = commands.map((commandEntry) => {
+            if (!commandEntry || !Array.isArray(commandEntry.args)) {
+                return commandEntry;
+            }
+
+            const rewrittenArgs = namespacedArgs(commandEntry.args, activePrefix);
+            if (rewrittenArgs === commandEntry.args) {
+                return commandEntry;
+            }
+
+            changed = true;
+            return {
+                ...commandEntry,
+                args: rewrittenArgs,
+            };
+        });
+
+        return changed ? rewrittenCommands : commands;
+    }
+
     function createContextualMultiExecutor(executor, invocationContext) {
-        return (commands, selectedDB) =>
-            runWithNamespaceInvocationContext(invocationContext, () => executor(commands, selectedDB));
+        return async (commands, selectedDB) =>
+            runWithNamespaceInvocationContext(invocationContext, async () => {
+                const activePrefix = activePrefixForInvocationContext(invocationContext);
+                const rewrittenCommands = await namespacedMultiCommands(commands, activePrefix);
+                return executor(rewrittenCommands, selectedDB);
+            });
     }
 
     async function loadCommandSpecs() {
@@ -384,7 +436,7 @@ export function attachNamespace(client, initialNamespace) {
 
         loadingSpecsPromise = (async () => {
             try {
-                const response = await rawSendCommand(["COMMAND"]);
+                const response = await rawInternalSendCommand(["COMMAND"]);
                 const discoveredSpecs = parseCommandSpecs(response);
                 if (discoveredSpecs.size > 0) {
                     commandSpecs = new Map([...commandSpecs, ...discoveredSpecs]);
@@ -425,6 +477,25 @@ export function attachNamespace(client, initialNamespace) {
         return rewrittenArgs;
     }
 
+    async function namespacedSendCommand(rawSender, args, options) {
+        const bypassNamespace = bypassNamespaceStore.getStore() === true;
+        if (bypassNamespace) {
+            return rawSender(args, options);
+        }
+
+        const scopedNamespace = scopedNamespaceStore.getStore();
+        const activePrefix = scopedNamespace ? scopedNamespace.prefix : namespacePrefix;
+        if (!activePrefix) {
+            return rawSender(args, options);
+        }
+
+        if (client.isOpen) {
+            await loadCommandSpecs();
+        }
+
+        return rawSender(namespacedArgs(args, activePrefix), options);
+    }
+
     function withNamespace(nextNamespace) {
         const normalizedNamespace = normalizeNamespace(nextNamespace);
         const scopedPrefix = normalizedNamespace ? `${normalizedNamespace}:` : "";
@@ -448,23 +519,14 @@ export function attachNamespace(client, initialNamespace) {
     }
 
     client.sendCommand = async function (args, options) {
-        const bypassNamespace = bypassNamespaceStore.getStore() === true;
-        if (bypassNamespace) {
-            return rawSendCommand(args, options);
-        }
-
-        const scopedNamespace = scopedNamespaceStore.getStore();
-        const activePrefix = scopedNamespace ? scopedNamespace.prefix : namespacePrefix;
-        if (!activePrefix) {
-            return rawSendCommand(args, options);
-        }
-
-        if (client.isOpen) {
-            await loadCommandSpecs();
-        }
-
-        return rawSendCommand(namespacedArgs(args, activePrefix), options);
+        return namespacedSendCommand(rawClientSendCommand, args, options);
     };
+
+    if (internalClient && internalClient !== client && typeof internalClient.sendCommand === "function") {
+        internalClient.sendCommand = async function (args, options) {
+            return namespacedSendCommand(rawInternalSendCommand, args, options);
+        };
+    }
 
     function createNamespacedMulti() {
         const invocationContext = captureNamespaceInvocationContext();

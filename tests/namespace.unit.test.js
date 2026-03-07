@@ -89,6 +89,47 @@ function createFakeClient({ commandResponse, isOpen = true } = {}) {
     return { client, calls, listeners };
 }
 
+function createSelfRoutedFakeClient({ commandResponse, isOpen = true } = {}) {
+    const listeners = new Map();
+    const calls = [];
+
+    const internalClient = {
+        isOpen,
+        async sendCommand(args, options) {
+            calls.push({ args, options });
+            const command = String(args?.[0] ?? "").toUpperCase();
+
+            if (command === "COMMAND") {
+                if (commandResponse instanceof Error) {
+                    throw commandResponse;
+                }
+                return commandResponse ?? [];
+            }
+
+            return { args, options };
+        },
+    };
+
+    const client = {
+        isOpen,
+        _self: internalClient,
+        on(event, handler) {
+            listeners.set(event, handler);
+        },
+        async get(key) {
+            return this._self.sendCommand(["GET", key]);
+        },
+        async set(key, value) {
+            return this._self.sendCommand(["SET", key, value]);
+        },
+        async sendCommand(args, options) {
+            return this._self.sendCommand(args, options);
+        },
+    };
+
+    return { client, calls, listeners };
+}
+
 test("attachNamespace prefixes command keys and supports runtime namespace updates", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [
@@ -312,6 +353,28 @@ test("dynamic-key script commands are namespaced even when COMMAND introspection
     assert.deepEqual(calls[0].args, ["COMMAND"]);
     assert.deepEqual(calls[1].args, ["EVAL", "return ARGV[1]", "1", "codex:planet", "arg1"]);
     assert.deepEqual(calls[2].args, ["FCALL", "myfunc", "2", "codex:earth", "codex:mars", "arg1"]);
+});
+
+test("withNamespace prefixes commands that route through _self.sendCommand", async () => {
+    const { client, calls } = createSelfRoutedFakeClient({
+        commandResponse: [
+            ["get", 2, ["readonly"], 1, 1, 1],
+            ["set", -3, ["write"], 1, 1, 1],
+        ],
+    });
+
+    attachNamespace(client, "global");
+
+    const tenantA = client.withNamespace("alpha");
+    const tenantB = client.withNamespace("beta");
+
+    await tenantA.set("planet", "mars");
+    await tenantB.set("planet", "earth");
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "alpha:planet", "mars"]);
+    assert.deepEqual(calls[2].args, ["SET", "beta:planet", "earth"]);
+    assert.equal(client.namespace, "global");
 });
 
 test("attachNamespace falls back to built-in command specs when COMMAND introspection is unavailable", async () => {
