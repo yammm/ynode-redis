@@ -237,6 +237,43 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     assert.equal(await fastify.redis.raw.get(`beta:${logicalSharedKey}`), "b");
     assert.equal(fastify.redis.namespace, undefined);
 
+    const multiKey = `${key}:multi`;
+    const transactionA = tenantA.multi();
+    transactionA.set(multiKey, "tx-a").get(multiKey);
+    await transactionA.exec();
+
+    const transactionB = tenantB.multi();
+    transactionB.set(multiKey, "tx-b").get(multiKey);
+    await transactionB.exec();
+
+    assert.equal(await tenantA.get(multiKey), "tx-a");
+    assert.equal(await tenantB.get(multiKey), "tx-b");
+    assert.equal(await fastify.redis.raw.get(`alpha:${multiKey}`), "tx-a");
+    assert.equal(await fastify.redis.raw.get(`beta:${multiKey}`), "tx-b");
+
+    const pipelineKey = `${key}:pipeline`;
+    const pipelineA = tenantA.multi();
+    pipelineA.set(pipelineKey, "pipe-a").get(pipelineKey);
+    await pipelineA.execAsPipeline();
+
+    const pipelineB = tenantB.multi();
+    pipelineB.set(pipelineKey, "pipe-b").get(pipelineKey);
+    await pipelineB.execAsPipeline();
+
+    assert.equal(await tenantA.get(pipelineKey), "pipe-a");
+    assert.equal(await tenantB.get(pipelineKey), "pipe-b");
+    assert.equal(await fastify.redis.raw.get(`alpha:${pipelineKey}`), "pipe-a");
+    assert.equal(await fastify.redis.raw.get(`beta:${pipelineKey}`), "pipe-b");
+
+    const rawMultiKey = `${key}:raw-multi`;
+    const rawTransaction = tenantA.raw.multi();
+    rawTransaction.set(rawMultiKey, "raw-value").get(rawMultiKey);
+    await rawTransaction.exec();
+    assert.equal(await fastify.redis.raw.get(rawMultiKey), "raw-value");
+    assert.equal(await tenantA.get(rawMultiKey), null);
+    assert.equal(await tenantB.get(rawMultiKey), null);
+    assert.equal(fastify.redis.namespace, undefined);
+
     fastify.redis.namespace = "codex:";
     assert.equal(fastify.redis.namespace, "codex");
 

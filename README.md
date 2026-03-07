@@ -128,6 +128,24 @@ const tenantRedis = fastify.redis.withNamespace("codex");
 await tenantRedis.raw.get("status"); // still unprefixed
 ```
 
+Advanced flows inherit the scope of the client that creates them:
+
+```javascript
+const tenantRedis = fastify.redis.withNamespace("codex");
+
+const transaction = tenantRedis.multi();
+transaction.set("status", "ready").get("status");
+await transaction.exec(); // operates on codex:status
+
+const pipeline = tenantRedis.multi();
+pipeline.set("counter", "1").get("counter");
+await pipeline.execAsPipeline(); // operates on codex:counter
+
+const rawTransaction = tenantRedis.raw.multi();
+rawTransaction.set("status", "literal");
+await rawTransaction.exec(); // operates on literal "status"
+```
+
 ## Health and Readiness
 
 This plugin exposes simple probe helpers:

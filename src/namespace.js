@@ -90,6 +90,8 @@ const DEFAULT_COMMAND_SPECS = new Map([
     ["ZUNIONSTORE", { firstKey: 1, lastKey: -1, step: 1 }],
 ]);
 
+const DYNAMIC_KEY_COUNT_COMMANDS = new Set(["EVAL", "EVAL_RO", "EVALSHA", "EVALSHA_RO", "FCALL", "FCALL_RO"]);
+
 function normalizeNamespace(value) {
     if (value === undefined || value === null) {
         return "";
@@ -162,6 +164,56 @@ function keyIndexesForCommand(spec, args) {
     const step = spec.step > 0 ? spec.step : 1;
     for (let index = spec.firstKey; index <= lastKey; index += step) {
         indexes.push(index);
+    }
+
+    return indexes;
+}
+
+function integerTokenValue(token) {
+    if (typeof token === "number") {
+        if (!Number.isFinite(token)) {
+            return null;
+        }
+        return Math.trunc(token);
+    }
+
+    if (typeof token === "bigint") {
+        const minSafeInteger = BigInt(Number.MIN_SAFE_INTEGER);
+        const maxSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+        if (token < minSafeInteger || token > maxSafeInteger) {
+            return null;
+        }
+        return Number(token);
+    }
+
+    const tokenValue = Buffer.isBuffer(token) ? token.toString("utf8") : typeof token === "string" ? token : null;
+    if (tokenValue === null || tokenValue.length === 0) {
+        return null;
+    }
+
+    const parsed = Number.parseInt(tokenValue, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function keyIndexesForDynamicCountCommand(command, args) {
+    if (!DYNAMIC_KEY_COUNT_COMMANDS.has(command)) {
+        return null;
+    }
+
+    if (!Array.isArray(args) || args.length < 4) {
+        return [];
+    }
+
+    const keyCount = integerTokenValue(args[2]);
+    if (keyCount === null || keyCount <= 0) {
+        return [];
+    }
+
+    const availableKeys = Math.max(0, args.length - 3);
+    const actualKeyCount = Math.min(keyCount, availableKeys);
+    const indexes = [];
+    for (let offset = 0; offset < actualKeyCount; offset += 1) {
+        indexes.push(3 + offset);
     }
 
     return indexes;
@@ -276,6 +328,10 @@ export function attachNamespace(client, initialNamespace) {
     let namespace = normalizeNamespace(initialNamespace);
     let namespacePrefix = namespace ? `${namespace}:` : "";
     const scopedClientCache = new Map();
+    const rawExecuteMulti = typeof client._executeMulti === "function" ? client._executeMulti.bind(client) : null;
+    const rawExecutePipeline = typeof client._executePipeline === "function" ? client._executePipeline.bind(client) : null;
+    const originalMULTI = typeof client.MULTI === "function" ? client.MULTI.bind(client) : null;
+    const originalMulti = typeof client.multi === "function" ? client.multi.bind(client) : null;
 
     function withoutNamespace(callback) {
         return bypassNamespaceStore.run(true, callback);
@@ -285,6 +341,36 @@ export function attachNamespace(client, initialNamespace) {
 
     function runWithScopedNamespace(prefix, callback) {
         return scopedNamespaceStore.run({ prefix }, callback);
+    }
+
+    function captureNamespaceInvocationContext() {
+        if (bypassNamespaceStore.getStore() === true) {
+            return { bypass: true };
+        }
+
+        const scopedNamespace = scopedNamespaceStore.getStore();
+        if (scopedNamespace) {
+            return { bypass: false, scopedPrefix: scopedNamespace.prefix };
+        }
+
+        return { bypass: false, scopedPrefix: undefined };
+    }
+
+    function runWithNamespaceInvocationContext(invocationContext, callback) {
+        if (invocationContext.bypass) {
+            return bypassNamespaceStore.run(true, callback);
+        }
+
+        if (invocationContext.scopedPrefix !== undefined) {
+            return scopedNamespaceStore.run({ prefix: invocationContext.scopedPrefix }, callback);
+        }
+
+        return callback();
+    }
+
+    function createContextualMultiExecutor(executor, invocationContext) {
+        return (commands, selectedDB) =>
+            runWithNamespaceInvocationContext(invocationContext, () => executor(commands, selectedDB));
     }
 
     async function loadCommandSpecs() {
@@ -324,13 +410,14 @@ export function attachNamespace(client, initialNamespace) {
             return args;
         }
 
+        const dynamicKeyIndexes = keyIndexesForDynamicCountCommand(command, args);
         const spec = commandSpecs.get(command);
-        const keyIndexes = keyIndexesForCommand(spec, args);
+        const keyIndexes = dynamicKeyIndexes ?? keyIndexesForCommand(spec, args);
         if (keyIndexes.length === 0) {
             return args;
         }
 
-        const rewrittenArgs = [...args];
+        const rewrittenArgs = Object.assign([...args], args);
         for (const index of keyIndexes) {
             rewrittenArgs[index] = applyPrefixToKey(rewrittenArgs[index], activePrefix);
         }
@@ -378,6 +465,31 @@ export function attachNamespace(client, initialNamespace) {
 
         return rawSendCommand(namespacedArgs(args, activePrefix), options);
     };
+
+    function createNamespacedMulti() {
+        const invocationContext = captureNamespaceInvocationContext();
+
+        if (typeof client.Multi === "function" && rawExecuteMulti && rawExecutePipeline) {
+            const executeMulti = createContextualMultiExecutor(rawExecuteMulti, invocationContext);
+            const executePipeline = createContextualMultiExecutor(rawExecutePipeline, invocationContext);
+            return new client.Multi(executeMulti, executePipeline, client._commandOptions?.typeMapping);
+        }
+
+        if (originalMULTI) {
+            return runWithNamespaceInvocationContext(invocationContext, () => originalMULTI());
+        }
+
+        if (originalMulti) {
+            return runWithNamespaceInvocationContext(invocationContext, () => originalMulti());
+        }
+
+        throw new TypeError("Redis client does not support MULTI.");
+    }
+
+    if (rawExecuteMulti && rawExecutePipeline) {
+        client.MULTI = createNamespacedMulti;
+        client.multi = createNamespacedMulti;
+    }
 
     if (typeof client.on === "function") {
         client.on("ready", () => {
