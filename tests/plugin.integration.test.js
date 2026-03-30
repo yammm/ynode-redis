@@ -373,15 +373,12 @@ test("plugin startup times out when connect does not resolve", async () => {
 test("plugin rejects invalid startupTimeout values", async () => {
     const { fastify } = createFastifyHarness();
 
-    await assert.rejects(
-        async () => {
-            await redisPlugin(fastify, {
-                url: "redis://127.0.0.1:6379",
-                startupTimeout: -1,
-            });
-        },
-        /startupTimeout must be a non-negative number in milliseconds/,
-    );
+    await assert.rejects(async () => {
+        await redisPlugin(fastify, {
+            url: "redis://127.0.0.1:6379",
+            startupTimeout: -1,
+        });
+    }, /startupTimeout must be a non-negative number in milliseconds/);
 });
 
 test("plugin startup fails when CLIENT INFO is denied", async (t) => {

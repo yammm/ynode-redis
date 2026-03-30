@@ -65,6 +65,13 @@ async function startupWithTimeout(client, timeoutMs, startupFlow) {
     }
 }
 
+/**
+ * Wires Redis client event handlers and Fastify lifecycle hooks for connection
+ * management, logging, and graceful shutdown.
+ * @param {FastifyInstance} fastify - Fastify server instance.
+ * @param {object} client - Redis client instance.
+ * @param {object} [options] - Plugin options (used for name, url, startupTimeout).
+ */
 export function attachLifecycle(fastify, client, options) {
     let info;
     const startupTimeout = startupTimeoutMs(options);
@@ -72,28 +79,43 @@ export function attachLifecycle(fastify, client, options) {
     // Initiating a connection to the Redis server
     client.on("connect", () => fastify.log.debug(`Initiating a connection to the Redis server`));
 
-    // Initiating a connection to the Redis server
-    client.on("ready", async () => {
-        try {
-            await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]);
-            info = await clientInfo(client);
-            fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
-        } catch (error) {
-            fastify.log.trace(`Redis CLIENT SETNAME or INFO error has occurred:`, error);
-        }
+    // Connection established and ready to accept commands
+    client.on("ready", () => {
+        client
+            .sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"])
+            .then(() => clientInfo(client))
+            .then((result) => {
+                info = result;
+                fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
+            })
+            .catch((error) => {
+                fastify.log.trace(
+                    { err: error },
+                    `Redis CLIENT SETNAME or INFO error has occurred`,
+                );
+            });
     });
 
     // Connection has been closed (via .disconnect() / .close())
     client.on("end", () =>
-        fastify.log.info(`Connection to the Redis server has been closed ${connectionLabel(info, options)}`),
+        fastify.log.info(
+            `Connection to the Redis server has been closed ${connectionLabel(info, options)}`,
+        ),
     );
 
     // Always ensure there is a listener for errors in the client to prevent process crashes due to unhandled errors
-    client.on("error", (error) => fastify.log.error(`Redis client error has occurred:`, error));
+    client.on("error", (error) =>
+        fastify.log.error(
+            { err: error },
+            `Redis client error has occurred ${connectionLabel(info, options)}`,
+        ),
+    );
 
-    // Initiating a connection to the Redis server
+    // Driver is attempting to re-establish a lost connection
     client.on("reconnecting", () =>
-        fastify.log.warn(`Client is trying to reconnect to the Redis server ${connectionLabel(info, options)}`),
+        fastify.log.warn(
+            `Client is trying to reconnect to the Redis server ${connectionLabel(info, options)}`,
+        ),
     );
 
     fastify.addHook("onReady", async () => {
@@ -109,6 +131,13 @@ export function attachLifecycle(fastify, client, options) {
         }
 
         fastify.log.debug(`Attempting to close our Redis client ${connectionLabel(info, options)}`);
-        await closeClient(client);
+        try {
+            await closeClient(client);
+        } catch (error) {
+            fastify.log.warn(
+                { err: error },
+                `Error closing Redis client ${connectionLabel(info, options)}`,
+            );
+        }
     });
 }

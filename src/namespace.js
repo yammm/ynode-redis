@@ -90,7 +90,14 @@ const DEFAULT_COMMAND_SPECS = new Map([
     ["ZUNIONSTORE", { firstKey: 1, lastKey: -1, step: 1 }],
 ]);
 
-const DYNAMIC_KEY_COUNT_COMMANDS = new Set(["EVAL", "EVAL_RO", "EVALSHA", "EVALSHA_RO", "FCALL", "FCALL_RO"]);
+const DYNAMIC_KEY_COUNT_COMMANDS = new Set([
+    "EVAL",
+    "EVAL_RO",
+    "EVALSHA",
+    "EVALSHA_RO",
+    "FCALL",
+    "FCALL_RO",
+]);
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
 
@@ -129,7 +136,12 @@ function parseCommandSpecs(reply) {
         const lastKey = Number(entry[4]);
         const step = Number(entry[5]);
 
-        if (!name || !Number.isFinite(firstKey) || !Number.isFinite(lastKey) || !Number.isFinite(step)) {
+        if (
+            !name ||
+            !Number.isFinite(firstKey) ||
+            !Number.isFinite(lastKey) ||
+            !Number.isFinite(step)
+        ) {
             continue;
         }
 
@@ -188,7 +200,11 @@ function integerTokenValue(token) {
         return Number(token);
     }
 
-    const tokenValue = Buffer.isBuffer(token) ? token.toString("utf8") : typeof token === "string" ? token : null;
+    const tokenValue = Buffer.isBuffer(token)
+        ? token.toString("utf8")
+        : typeof token === "string"
+          ? token
+          : null;
     if (tokenValue === null || tokenValue.length === 0) {
         return null;
     }
@@ -230,14 +246,21 @@ function applyPrefixToKey(key, prefix, prefixBuffer) {
         if (!prefixBuffer) {
             prefixBuffer = Buffer.from(prefix);
         }
-        if (key.length >= prefixBuffer.length && key.subarray(0, prefixBuffer.length).equals(prefixBuffer)) {
+        if (
+            key.length >= prefixBuffer.length &&
+            key.subarray(0, prefixBuffer.length).equals(prefixBuffer)
+        ) {
             return key;
         }
         return Buffer.concat([prefixBuffer, key]);
     }
 
     const keyString =
-        typeof key === "string" ? key : typeof key === "number" || typeof key === "bigint" ? String(key) : null;
+        typeof key === "string"
+            ? key
+            : typeof key === "number" || typeof key === "bigint"
+              ? String(key)
+              : null;
 
     if (keyString === null) {
         return key;
@@ -251,7 +274,9 @@ function applyPrefixToKey(key, prefix, prefixBuffer) {
 }
 
 function namespaceCompatibilityError(message) {
-    const error = new Error(`Redis client is incompatible with @ynode/redis namespace interception: ${message}`);
+    const error = new Error(
+        `Redis client is incompatible with @ynode/redis namespace interception: ${message}`,
+    );
     error.code = NAMESPACE_COMPATIBILITY_ERROR_CODE;
     return error;
 }
@@ -261,7 +286,8 @@ function probeCommandDispatch(client) {
         throw namespaceCompatibilityError("client.sendCommand is required.");
     }
 
-    const internalClient = client && typeof client._self === "object" && client._self !== null ? client._self : null;
+    const internalClient =
+        client && typeof client._self === "object" && client._self !== null ? client._self : null;
     const usesPublicSendCommand = !internalClient || internalClient === client;
 
     if (usesPublicSendCommand) {
@@ -317,7 +343,9 @@ function createScopedNamespaceProxy({
         },
         set(target, property, value) {
             if (property === "namespace") {
-                throw new TypeError("Cannot assign namespace on scoped client. Use withNamespace().");
+                throw new TypeError(
+                    "Cannot assign namespace on scoped client. Use withNamespace().",
+                );
             }
             return Reflect.set(target, property, value, target);
         },
@@ -349,6 +377,14 @@ function createRawClientProxy(client, runWithoutNamespace) {
     });
 }
 
+/**
+ * Attaches transparent key-namespace prefixing to a Redis client.
+ * Intercepts sendCommand to prepend the active namespace prefix to key arguments,
+ * supports scoped namespaces via withNamespace(), raw bypass via withoutNamespace(),
+ * and MULTI/pipeline command rewriting.
+ * @param {object} client - Redis client instance (node-redis v5).
+ * @param {string} [initialNamespace] - Default namespace prefix for all key commands.
+ */
 export function attachNamespace(client, initialNamespace) {
     const bypassNamespaceStore = new AsyncLocalStorage();
     const scopedNamespaceStore = new AsyncLocalStorage();
@@ -385,7 +421,11 @@ export function attachNamespace(client, initialNamespace) {
 
         const scopedNamespace = scopedNamespaceStore.getStore();
         if (scopedNamespace) {
-            return { bypass: false, scopedPrefix: scopedNamespace.prefix, scopedPrefixBuffer: scopedNamespace.prefixBuffer };
+            return {
+                bypass: false,
+                scopedPrefix: scopedNamespace.prefix,
+                scopedPrefixBuffer: scopedNamespace.prefixBuffer,
+            };
         }
 
         return { bypass: false, scopedPrefix: undefined, scopedPrefixBuffer: undefined };
@@ -397,7 +437,13 @@ export function attachNamespace(client, initialNamespace) {
         }
 
         if (invocationContext.scopedPrefix !== undefined) {
-            return scopedNamespaceStore.run({ prefix: invocationContext.scopedPrefix, prefixBuffer: invocationContext.scopedPrefixBuffer }, callback);
+            return scopedNamespaceStore.run(
+                {
+                    prefix: invocationContext.scopedPrefix,
+                    prefixBuffer: invocationContext.scopedPrefixBuffer,
+                },
+                callback,
+            );
         }
 
         return callback();
@@ -409,7 +455,10 @@ export function attachNamespace(client, initialNamespace) {
         }
 
         if (invocationContext.scopedPrefix !== undefined) {
-            return { prefix: invocationContext.scopedPrefix, prefixBuffer: invocationContext.scopedPrefixBuffer };
+            return {
+                prefix: invocationContext.scopedPrefix,
+                prefixBuffer: invocationContext.scopedPrefixBuffer,
+            };
         }
 
         return { prefix: namespacePrefix, prefixBuffer: namespacePrefixBuffer };
@@ -461,7 +510,11 @@ export function attachNamespace(client, initialNamespace) {
 
         const rewrittenArgs = Object.assign([...args], args);
         for (const index of keyIndexes) {
-            rewrittenArgs[index] = applyPrefixToKey(rewrittenArgs[index], activePrefix, activePrefixBuffer);
+            rewrittenArgs[index] = applyPrefixToKey(
+                rewrittenArgs[index],
+                activePrefix,
+                activePrefixBuffer,
+            );
         }
 
         return rewrittenArgs;
@@ -475,13 +528,17 @@ export function attachNamespace(client, initialNamespace) {
 
         const scopedNamespace = scopedNamespaceStore.getStore();
         const activePrefix = scopedNamespace ? scopedNamespace.prefix : namespacePrefix;
-        const activePrefixBuffer = scopedNamespace ? scopedNamespace.prefixBuffer : namespacePrefixBuffer;
+        const activePrefixBuffer = scopedNamespace
+            ? scopedNamespace.prefixBuffer
+            : namespacePrefixBuffer;
         if (!activePrefix) {
             return rawSender(args, options);
         }
 
         if (client.isOpen && !commandSpecsLoaded) {
-            return loadCommandSpecs().then(() => rawSender(namespacedArgs(args, activePrefix, activePrefixBuffer), options));
+            return loadCommandSpecs().then(() =>
+                rawSender(namespacedArgs(args, activePrefix, activePrefixBuffer), options),
+            );
         }
 
         return rawSender(namespacedArgs(args, activePrefix, activePrefixBuffer), options);
@@ -497,7 +554,11 @@ export function attachNamespace(client, initialNamespace) {
             return parameters;
         }
 
-        const rewrittenCommandArgs = namespacedArgs(parameters[commandArgsIndex], activePrefix, activePrefixBuffer);
+        const rewrittenCommandArgs = namespacedArgs(
+            parameters[commandArgsIndex],
+            activePrefix,
+            activePrefixBuffer,
+        );
         if (rewrittenCommandArgs === parameters[commandArgsIndex]) {
             return parameters;
         }
@@ -510,12 +571,17 @@ export function attachNamespace(client, initialNamespace) {
     function wrapMultiAddCommand(rawAddCommand, invocationContext) {
         return (...parameters) =>
             runWithNamespaceInvocationContext(invocationContext, () => {
-                const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } = activePrefixForInvocationContext(invocationContext);
+                const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
+                    activePrefixForInvocationContext(invocationContext);
                 if (client.isOpen && activePrefix && !commandSpecsLoaded) {
                     void loadCommandSpecs();
                 }
 
-                const rewrittenParameters = rewriteMultiCommandArguments(parameters, activePrefix, activePrefixBuffer);
+                const rewrittenParameters = rewriteMultiCommandArguments(
+                    parameters,
+                    activePrefix,
+                    activePrefixBuffer,
+                );
                 return rawAddCommand(...rewrittenParameters);
             });
     }
@@ -532,14 +598,22 @@ export function attachNamespace(client, initialNamespace) {
         const rawAddCommand = multiClient.addCommand.bind(multiClient);
         multiClient.addCommand = wrapMultiAddCommand(rawAddCommand, invocationContext);
 
-        for (const methodName of ["exec", "EXEC", "execTyped", "execAsPipeline", "execAsPipelineTyped"]) {
+        for (const methodName of [
+            "exec",
+            "EXEC",
+            "execTyped",
+            "execAsPipeline",
+            "execAsPipelineTyped",
+        ]) {
             if (typeof multiClient[methodName] !== "function") {
                 continue;
             }
 
             const rawMethod = multiClient[methodName].bind(multiClient);
             multiClient[methodName] = (...methodArgs) =>
-                runWithNamespaceInvocationContext(invocationContext, () => rawMethod(...methodArgs));
+                runWithNamespaceInvocationContext(invocationContext, () =>
+                    rawMethod(...methodArgs),
+                );
         }
 
         return multiClient;
@@ -548,7 +622,9 @@ export function attachNamespace(client, initialNamespace) {
     function createNamespacedMultiFactory(rawFactory) {
         return (...factoryArgs) => {
             const invocationContext = captureNamespaceInvocationContext();
-            const multiClient = runWithNamespaceInvocationContext(invocationContext, () => rawFactory(...factoryArgs));
+            const multiClient = runWithNamespaceInvocationContext(invocationContext, () =>
+                rawFactory(...factoryArgs),
+            );
             return wrapMultiClient(multiClient, invocationContext);
         };
     }
@@ -573,7 +649,8 @@ export function attachNamespace(client, initialNamespace) {
             getWithNamespace: withNamespace,
             getRawClient: () => rawClientProxy,
             withoutNamespace,
-            runWithScopedNamespace: (callback) => runWithScopedNamespace(scopedPrefix, scopedPrefixBuffer, callback),
+            runWithScopedNamespace: (callback) =>
+                runWithScopedNamespace(scopedPrefix, scopedPrefixBuffer, callback),
         });
 
         if (scopedClientCache.size >= MAX_SCOPED_NAMESPACE_CACHE_SIZE) {

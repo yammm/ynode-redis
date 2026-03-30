@@ -1,3 +1,9 @@
+/**
+ * Closes a Redis client, handling differences between node-redis v4 and v5 APIs.
+ * Tries close(), then quit(), then destroy()/disconnect() in order of preference.
+ * @param {object} client - Redis client instance.
+ * @returns {Promise<void>}
+ */
 export async function closeClient(client) {
     // node-redis v5: close(); v4: quit() / disconnect()
     if (typeof client.close === "function") {

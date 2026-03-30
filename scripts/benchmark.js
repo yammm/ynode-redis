@@ -39,8 +39,12 @@ async function runBenchmark() {
 
     const rawSetTime = t1 - t0;
     const rawGetTime = t2 - t1;
-    console.log(`RAW SET: ${rawSetTime.toFixed(2)}ms (${(ITERATIONS / (rawSetTime / 1000)).toFixed(0)} ops/sec)`);
-    console.log(`RAW GET: ${rawGetTime.toFixed(2)}ms (${(ITERATIONS / (rawGetTime / 1000)).toFixed(0)} ops/sec)`);
+    console.log(
+        `RAW SET: ${rawSetTime.toFixed(2)}ms (${(ITERATIONS / (rawSetTime / 1000)).toFixed(0)} ops/sec)`,
+    );
+    console.log(
+        `RAW GET: ${rawGetTime.toFixed(2)}ms (${(ITERATIONS / (rawGetTime / 1000)).toFixed(0)} ops/sec)`,
+    );
 
     // 2. Namespaced Client (Overhead Performance)
     const nsClient = client.withNamespace("tenant-abc");
@@ -57,8 +61,12 @@ async function runBenchmark() {
 
     const nsSetTime = t4 - t3;
     const nsGetTime = t5 - t4;
-    console.log(`NS SET: ${nsSetTime.toFixed(2)}ms (${(ITERATIONS / (nsSetTime / 1000)).toFixed(0)} ops/sec)`);
-    console.log(`NS GET: ${nsGetTime.toFixed(2)}ms (${(ITERATIONS / (nsGetTime / 1000)).toFixed(0)} ops/sec)`);
+    console.log(
+        `NS SET: ${nsSetTime.toFixed(2)}ms (${(ITERATIONS / (nsSetTime / 1000)).toFixed(0)} ops/sec)`,
+    );
+    console.log(
+        `NS GET: ${nsGetTime.toFixed(2)}ms (${(ITERATIONS / (nsGetTime / 1000)).toFixed(0)} ops/sec)`,
+    );
 
     // Cleanup and exit
     performance.now();
@@ -71,8 +79,12 @@ async function runBenchmark() {
     performance.now();
 
     console.log(`\nSummary:`);
-    console.log(`SET Overhead: ${((nsSetTime - rawSetTime) / rawSetTime * 100).toFixed(2)}% (+${(nsSetTime - rawSetTime).toFixed(2)}ms)`);
-    console.log(`GET Overhead: ${((nsGetTime - rawGetTime) / rawGetTime * 100).toFixed(2)}% (+${(nsGetTime - rawGetTime).toFixed(2)}ms)`);
+    console.log(
+        `SET Overhead: ${(((nsSetTime - rawSetTime) / rawSetTime) * 100).toFixed(2)}% (+${(nsSetTime - rawSetTime).toFixed(2)}ms)`,
+    );
+    console.log(
+        `GET Overhead: ${(((nsGetTime - rawGetTime) / rawGetTime) * 100).toFixed(2)}% (+${(nsGetTime - rawGetTime).toFixed(2)}ms)`,
+    );
 
     await app.close();
 }
