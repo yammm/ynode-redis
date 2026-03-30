@@ -101,6 +101,12 @@ const DYNAMIC_KEY_COUNT_COMMANDS = new Set([
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
 
+/**
+ * Strips trailing colons and whitespace from a namespace value. Returns empty
+ * string for null/undefined.
+ * @param {*} value - Raw namespace input.
+ * @returns {string} Normalized namespace without trailing separator.
+ */
 function normalizeNamespace(value) {
     if (value === undefined || value === null) {
         return "";
@@ -110,6 +116,11 @@ function normalizeNamespace(value) {
     return normalized;
 }
 
+/**
+ * Extracts an uppercase command name from a string or Buffer token.
+ * @param {string|Buffer} token - First element of a Redis command args array.
+ * @returns {string} Uppercase command name, or empty string for unsupported types.
+ */
 function commandNameToken(token) {
     if (typeof token === "string") {
         return token.toUpperCase();
@@ -120,6 +131,12 @@ function commandNameToken(token) {
     return "";
 }
 
+/**
+ * Parses the raw reply from the Redis COMMAND introspection into a Map of
+ * command specs keyed by uppercase command name.
+ * @param {Array<Array>} reply - Raw COMMAND reply from Redis.
+ * @returns {Map<string, object>} Map of command name to key-position spec.
+ */
 function parseCommandSpecs(reply) {
     const specs = new Map();
     if (!Array.isArray(reply)) {
@@ -151,6 +168,13 @@ function parseCommandSpecs(reply) {
     return specs;
 }
 
+/**
+ * Computes the argument indexes that contain Redis keys for a given command
+ * spec and argument list.
+ * @param {object} spec - Key-position spec with firstKey, lastKey, and step.
+ * @param {Array} args - Full command arguments array (command name at index 0).
+ * @returns {Array<number>} Indexes into args that hold key values.
+ */
 function keyIndexesForCommand(spec, args) {
     if (!spec || !Array.isArray(args)) {
         return [];
@@ -183,6 +207,13 @@ function keyIndexesForCommand(spec, args) {
     return indexes;
 }
 
+/**
+ * Coerces a command argument token to a safe integer value.
+ * Handles strings, Buffers, numbers, and BigInts. Returns null when the
+ * token cannot be represented as a finite integer within safe bounds.
+ * @param {string|Buffer|number|bigint} token - Redis command argument.
+ * @returns {number|null} Integer value, or null if conversion fails.
+ */
 function integerTokenValue(token) {
     if (typeof token === "number") {
         if (!Number.isFinite(token)) {
@@ -213,6 +244,13 @@ function integerTokenValue(token) {
     return Number.isNaN(parsed) ? null : parsed;
 }
 
+/**
+ * Returns key indexes for commands that encode their key count as a runtime
+ * argument (EVAL, EVALSHA, FCALL and their read-only variants).
+ * @param {string} command - Uppercase command name.
+ * @param {Array} args - Full command arguments array.
+ * @returns {Array<number>|null} Key indexes, or null when the command is not dynamic.
+ */
 function keyIndexesForDynamicCountCommand(command, args) {
     if (!DYNAMIC_KEY_COUNT_COMMANDS.has(command)) {
         return null;
@@ -237,6 +275,15 @@ function keyIndexesForDynamicCountCommand(command, args) {
     return indexes;
 }
 
+/**
+ * Prepends a namespace prefix to a Redis key. Supports string, number, bigint,
+ * and Buffer keys. Returns the key unchanged if it already starts with the
+ * prefix or if the prefix is empty.
+ * @param {string|Buffer|number|bigint} key - Original key value.
+ * @param {string} prefix - Namespace prefix including trailing colon.
+ * @param {Buffer} [prefixBuffer] - Pre-allocated Buffer of the prefix for Buffer keys.
+ * @returns {string|Buffer} Prefixed key, or the original if already prefixed.
+ */
 function applyPrefixToKey(key, prefix, prefixBuffer) {
     if (!prefix) {
         return key;
@@ -273,6 +320,12 @@ function applyPrefixToKey(key, prefix, prefixBuffer) {
     return `${prefix}${keyString}`;
 }
 
+/**
+ * Creates an Error with a standard code indicating the Redis client is
+ * incompatible with namespace interception.
+ * @param {string} message - Detail about the incompatibility.
+ * @returns {Error} Error with code REDIS_NAMESPACE_INCOMPATIBLE_CLIENT.
+ */
 function namespaceCompatibilityError(message) {
     const error = new Error(
         `Redis client is incompatible with @ynode/redis namespace interception: ${message}`,
@@ -281,6 +334,13 @@ function namespaceCompatibilityError(message) {
     return error;
 }
 
+/**
+ * Probes a node-redis client to determine how generated command methods
+ * dispatch internally. Returns whether sendCommand on the public client is
+ * the canonical path, or whether an internal _self must also be intercepted.
+ * @param {object} client - Redis client instance.
+ * @returns {object} Probe result with usesPublicSendCommand and fallbackInternalClient.
+ */
 function probeCommandDispatch(client) {
     if (!client || typeof client.sendCommand !== "function") {
         throw namespaceCompatibilityError("client.sendCommand is required.");
@@ -303,6 +363,19 @@ function probeCommandDispatch(client) {
     return { usesPublicSendCommand: false, fallbackInternalClient: internalClient };
 }
 
+/**
+ * Creates a Proxy around the Redis client that routes all method calls
+ * through a scoped namespace context. Property access for namespace,
+ * withNamespace, raw, and withoutNamespace is intercepted with scoped values.
+ * @param {object} options - Proxy configuration.
+ * @param {object} options.client - The underlying Redis client to wrap.
+ * @param {string} options.scopedNamespace - Namespace string for this scope.
+ * @param {Function} options.getWithNamespace - Factory for nested withNamespace calls.
+ * @param {Function} options.getRawClient - Getter that returns the raw (un-namespaced) proxy.
+ * @param {Function} options.withoutNamespace - Bypass callback for un-namespaced commands.
+ * @param {Function} options.runWithScopedNamespace - Runner that activates the scoped prefix.
+ * @returns {Proxy} Scoped namespace proxy over the client.
+ */
 function createScopedNamespaceProxy({
     client,
     scopedNamespace,
@@ -352,6 +425,13 @@ function createScopedNamespaceProxy({
     });
 }
 
+/**
+ * Creates a Proxy that wraps every method call in a namespace-bypass context,
+ * allowing commands to execute against raw (un-prefixed) keys.
+ * @param {object} client - The underlying Redis client to wrap.
+ * @param {Function} runWithoutNamespace - Runner that disables namespace prefixing.
+ * @returns {Proxy} Raw client proxy that bypasses namespace interception.
+ */
 function createRawClientProxy(client, runWithoutNamespace) {
     const functionCache = new Map();
 

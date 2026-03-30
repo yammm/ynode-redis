@@ -4,6 +4,12 @@ import { connectionLabel } from "./label.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
 
+/**
+ * Resolves the startup timeout from plugin options. Falls back to the default
+ * (10 s) when not specified. Throws on invalid values.
+ * @param {object} [options] - Plugin options.
+ * @returns {number} Timeout in milliseconds.
+ */
 function startupTimeoutMs(options) {
     const timeout = options?.startupTimeout;
     if (timeout === undefined || timeout === null) {
@@ -17,12 +23,23 @@ function startupTimeoutMs(options) {
     return timeout;
 }
 
+/**
+ * Creates an Error indicating Redis startup exceeded the allowed timeout.
+ * @param {number} timeoutMs - The timeout that was exceeded.
+ * @returns {Error} Error with code REDIS_STARTUP_TIMEOUT.
+ */
 function startupTimeoutError(timeoutMs) {
     const error = new Error(`Redis startup timed out after ${timeoutMs}ms`);
     error.code = "REDIS_STARTUP_TIMEOUT";
     return error;
 }
 
+/**
+ * Best-effort teardown of a Redis client after a startup timeout. Tries
+ * destroy, disconnect, close, and quit in order, stopping at the first
+ * available method.
+ * @param {object} client - Redis client instance.
+ */
 async function abortStartup(client) {
     const closeMethods = ["destroy", "disconnect", "close", "quit"];
 
@@ -44,6 +61,15 @@ async function abortStartup(client) {
     }
 }
 
+/**
+ * Races a startup flow against a timeout. If the timeout fires first, the
+ * client is aborted and a REDIS_STARTUP_TIMEOUT error is thrown.
+ * A timeoutMs of 0 disables the deadline entirely.
+ * @param {object} client - Redis client instance.
+ * @param {number} timeoutMs - Deadline in milliseconds (0 to disable).
+ * @param {Function} startupFlow - Async function that connects and initializes the client.
+ * @returns {Promise<*>} Result of the startup flow.
+ */
 async function startupWithTimeout(client, timeoutMs, startupFlow) {
     if (timeoutMs === 0) {
         return startupFlow();
