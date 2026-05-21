@@ -63,11 +63,19 @@ async function abortStartup(client) {
 
 /**
  * Races a startup flow against a timeout. If the timeout fires first, the
- * client is aborted and a REDIS_STARTUP_TIMEOUT error is thrown.
- * A timeoutMs of 0 disables the deadline entirely.
+ * client is aborted and a REDIS_STARTUP_TIMEOUT error is thrown. A
+ * timeoutMs of 0 disables the deadline entirely.
+ *
+ * Note: `clearTimeout` alone is not sufficient to suppress the timer
+ * callback when startupFlow wins by a hair — a timer that has already
+ * fired and queued its callback cannot be cancelled. A `settled` flag
+ * checked inside the timer callback prevents `abortStartup` from tearing
+ * down a client that startupFlow already finished connecting.
+ *
  * @param {object} client - Redis client instance.
  * @param {number} timeoutMs - Deadline in milliseconds (0 to disable).
- * @param {Function} startupFlow - Async function that connects and initializes the client.
+ * @param {function(): Promise<*>} startupFlow - Async function that
+ *   connects and initializes the client.
  * @returns {Promise<*>} Result of the startup flow.
  */
 async function startupWithTimeout(client, timeoutMs, startupFlow) {
@@ -75,17 +83,30 @@ async function startupWithTimeout(client, timeoutMs, startupFlow) {
         return startupFlow();
     }
 
+    let settled = false;
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
         timeoutId = setTimeout(() => {
+            if (settled) {
+                return;
+            }
+            settled = true;
             void abortStartup(client).finally(() => {
                 reject(startupTimeoutError(timeoutMs));
             });
         }, timeoutMs);
     });
 
+    const trackedStartup = (async () => {
+        try {
+            return await startupFlow();
+        } finally {
+            settled = true;
+        }
+    })();
+
     try {
-        return await Promise.race([startupFlow(), timeoutPromise]);
+        return await Promise.race([trackedStartup, timeoutPromise]);
     } finally {
         clearTimeout(timeoutId);
     }
@@ -106,20 +127,14 @@ export function attachLifecycle(fastify, client, options) {
     client.on("connect", () => fastify.log.debug(`Initiating a connection to the Redis server`));
 
     // Connection established and ready to accept commands
-    client.on("ready", () => {
-        client
-            .sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"])
-            .then(() => clientInfo(client))
-            .then((result) => {
-                info = result;
-                fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
-            })
-            .catch((error) => {
-                fastify.log.trace(
-                    { err: error },
-                    `Redis CLIENT SETNAME or INFO error has occurred`,
-                );
-            });
+    client.on("ready", async () => {
+        try {
+            await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]);
+            info = await clientInfo(client);
+            fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
+        } catch (error) {
+            fastify.log.trace({ err: error }, `Redis CLIENT SETNAME or INFO error has occurred`);
+        }
     });
 
     // Connection has been closed (via .disconnect() / .close())

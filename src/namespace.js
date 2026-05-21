@@ -172,7 +172,7 @@ function parseCommandSpecs(reply) {
  * Computes the argument indexes that contain Redis keys for a given command
  * spec and argument list.
  * @param {object} spec - Key-position spec with firstKey, lastKey, and step.
- * @param {Array} args - Full command arguments array (command name at index 0).
+ * @param {Array<*>} args - Full command arguments array (command name at index 0).
  * @returns {Array<number>} Indexes into args that hold key values.
  */
 function keyIndexesForCommand(spec, args) {
@@ -248,7 +248,7 @@ function integerTokenValue(token) {
  * Returns key indexes for commands that encode their key count as a runtime
  * argument (EVAL, EVALSHA, FCALL and their read-only variants).
  * @param {string} command - Uppercase command name.
- * @param {Array} args - Full command arguments array.
+ * @param {Array<*>} args - Full command arguments array.
  * @returns {Array<number>|null} Key indexes, or null when the command is not dynamic.
  */
 function keyIndexesForDynamicCountCommand(command, args) {
@@ -370,10 +370,10 @@ function probeCommandDispatch(client) {
  * @param {object} options - Proxy configuration.
  * @param {object} options.client - The underlying Redis client to wrap.
  * @param {string} options.scopedNamespace - Namespace string for this scope.
- * @param {Function} options.getWithNamespace - Factory for nested withNamespace calls.
- * @param {Function} options.getRawClient - Getter that returns the raw (un-namespaced) proxy.
- * @param {Function} options.withoutNamespace - Bypass callback for un-namespaced commands.
- * @param {Function} options.runWithScopedNamespace - Runner that activates the scoped prefix.
+ * @param {function(string=): object} options.getWithNamespace - Factory for nested withNamespace calls.
+ * @param {function(): object} options.getRawClient - Getter that returns the raw (un-namespaced) proxy.
+ * @param {function(function(): *): *} options.withoutNamespace - Bypass callback for un-namespaced commands.
+ * @param {function(function(): *): *} options.runWithScopedNamespace - Runner that activates the scoped prefix.
  * @returns {Proxy} Scoped namespace proxy over the client.
  */
 function createScopedNamespaceProxy({
@@ -429,7 +429,7 @@ function createScopedNamespaceProxy({
  * Creates a Proxy that wraps every method call in a namespace-bypass context,
  * allowing commands to execute against raw (un-prefixed) keys.
  * @param {object} client - The underlying Redis client to wrap.
- * @param {Function} runWithoutNamespace - Runner that disables namespace prefixing.
+ * @param {function(function(): *): *} runWithoutNamespace - Runner that disables namespace prefixing.
  * @returns {Proxy} Raw client proxy that bypasses namespace interception.
  */
 function createRawClientProxy(client, runWithoutNamespace) {

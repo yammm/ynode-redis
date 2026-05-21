@@ -381,6 +381,42 @@ test("plugin rejects invalid startupTimeout values", async () => {
     }, /startupTimeout must be a non-negative number in milliseconds/);
 });
 
+test("plugin startup does not abort the client when connect resolves before timeout", async () => {
+    const { fastify, hooks } = createFastifyHarness();
+    await redisPlugin(fastify, {
+        url: "redis://127.0.0.1:6379",
+        startupTimeout: 200,
+    });
+
+    const onReady = hooks.get("onReady");
+    const onClose = hooks.get("onClose");
+
+    let destroyCalls = 0;
+    let disconnectCalls = 0;
+    fastify.redis.connect = async () => {};
+    fastify.redis.sendCommand = async () => "redis_version:0.0.0\n";
+    fastify.redis.destroy = () => {
+        destroyCalls += 1;
+        markClientOpen(fastify.redis, false);
+    };
+    fastify.redis.disconnect = async () => {
+        disconnectCalls += 1;
+        markClientOpen(fastify.redis, false);
+    };
+
+    await onReady();
+
+    // Let any pending timer callback drain. If the race fix is missing the
+    // timer would still fire and call destroy()/disconnect() despite the
+    // settled startup; if the fix is present, the callback short-circuits.
+    await delay(300);
+
+    assert.equal(destroyCalls, 0, "destroy must not be called after a successful startup");
+    assert.equal(disconnectCalls, 0, "disconnect must not be called after a successful startup");
+
+    await onClose();
+});
+
 test("plugin startup fails when CLIENT INFO is denied", async (t) => {
     const redis = await startRedis();
     if (!redis) {

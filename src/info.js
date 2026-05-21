@@ -1,7 +1,7 @@
 /**
  * Retrieves and parses CLIENT INFO from the Redis server into a key-value object.
  * @param {object} client - Redis client with a sendCommand method.
- * @returns {Promise<Object<string, string>>} Parsed info key-value pairs.
+ * @returns {Promise<Record<string, string>>} Parsed info key-value pairs.
  */
 export async function clientInfo(client) {
     const info = await client.sendCommand(["CLIENT", "INFO"]);
