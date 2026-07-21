@@ -456,23 +456,83 @@ export function attachNamespace(client, initialNamespace) {
         return rewrittenParameters;
     }
 
-    function wrapMultiAddCommand(rawAddCommand, invocationContext) {
-        return (...parameters) =>
-            runWithNamespaceInvocationContext(invocationContext, () => {
+    function copyRewrittenCommandArgs(commandArgs, rewrittenCommandArgs) {
+        if (rewrittenCommandArgs === commandArgs) {
+            return;
+        }
+
+        commandArgs.length = rewrittenCommandArgs.length;
+        for (let index = 0; index < rewrittenCommandArgs.length; index += 1) {
+            commandArgs[index] = rewrittenCommandArgs[index];
+        }
+        for (const key of Object.keys(rewrittenCommandArgs)) {
+            commandArgs[key] = rewrittenCommandArgs[key];
+        }
+    }
+
+    function createPendingMultiCommandHooks(rawAddCommand, multiClient, invocationContext) {
+        const pendingRewrites = [];
+        let flushPendingRewritesPromise = null;
+
+        function addCommand(...parameters) {
+            return runWithNamespaceInvocationContext(invocationContext, () => {
                 const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
                     activePrefixForInvocationContext(invocationContext);
-                if (client.isOpen && activePrefix && !commandSpecsLoaded) {
-                    // Fire and forget: addCommand must remain synchronous.
-                    void loadCommandSpecs();
+                const commandArgsIndex = parameters.findIndex((value) => Array.isArray(value));
+
+                if (!activePrefix || commandArgsIndex === -1) {
+                    rawAddCommand(...parameters);
+                    return multiClient;
                 }
 
-                const rewrittenParameters = rewriteMultiCommandArguments(
-                    parameters,
-                    activePrefix,
-                    activePrefixBuffer,
-                );
-                return rawAddCommand(...rewrittenParameters);
+                if (!client.isOpen || commandSpecsLoaded) {
+                    const rewrittenParameters = rewriteMultiCommandArguments(
+                        parameters,
+                        activePrefix,
+                        activePrefixBuffer,
+                    );
+                    rawAddCommand(...rewrittenParameters);
+                    return multiClient;
+                }
+
+                pendingRewrites.push({
+                    args: parameters[commandArgsIndex],
+                    prefix: activePrefix,
+                    prefixBuffer: activePrefixBuffer,
+                });
+                rawAddCommand(...parameters);
+                return multiClient;
             });
+        }
+
+        async function flushPendingRewrites() {
+            if (flushPendingRewritesPromise) {
+                return flushPendingRewritesPromise;
+            }
+            if (pendingRewrites.length === 0) {
+                return undefined;
+            }
+
+            flushPendingRewritesPromise = (async () => {
+                const rewrites = pendingRewrites.splice(0);
+                if (client.isOpen && !commandSpecsLoaded) {
+                    await loadCommandSpecs();
+                }
+
+                for (const { args, prefix, prefixBuffer } of rewrites) {
+                    const rewrittenArgs = namespacedArgs(args, prefix, prefixBuffer);
+                    copyRewrittenCommandArgs(args, rewrittenArgs);
+                }
+            })();
+
+            try {
+                return await flushPendingRewritesPromise;
+            } finally {
+                flushPendingRewritesPromise = null;
+            }
+        }
+
+        return { addCommand, flushPendingRewrites };
     }
 
     function wrapMultiClient(multiClient, invocationContext) {
@@ -489,7 +549,17 @@ export function attachNamespace(client, initialNamespace) {
         wrappedMultiClients.add(multiClient);
 
         const rawAddCommand = multiClient.addCommand.bind(multiClient);
-        multiClient.addCommand = wrapMultiAddCommand(rawAddCommand, invocationContext);
+        const { addCommand, flushPendingRewrites } = createPendingMultiCommandHooks(
+            rawAddCommand,
+            multiClient,
+            invocationContext,
+        );
+        multiClient.addCommand = addCommand;
+
+        if (typeof multiClient.sendCommand === "function") {
+            multiClient.sendCommand = (args) =>
+                multiClient.addCommand(Array.isArray(args) ? args.slice() : args);
+        }
 
         for (const methodName of [
             "exec",
@@ -503,8 +573,11 @@ export function attachNamespace(client, initialNamespace) {
             }
 
             const rawMethod = multiClient[methodName].bind(multiClient);
-            multiClient[methodName] = (...methodArgs) =>
-                withoutNamespace(() => rawMethod(...methodArgs));
+            multiClient[methodName] = async (...methodArgs) =>
+                runWithNamespaceInvocationContext(invocationContext, async () => {
+                    await flushPendingRewrites();
+                    return withoutNamespace(() => rawMethod(...methodArgs));
+                });
         }
 
         return multiClient;

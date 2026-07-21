@@ -162,6 +162,16 @@ function createPublicMultiOnlyFakeClient({ commandResponse, isOpen = true } = {}
             return this.addCommand(["GET", key]);
         }
 
+        sendCommand(args) {
+            this.queue.push(Array.isArray(args) ? args.slice() : args);
+            return this;
+        }
+
+        rawBypassCommand(args) {
+            this.queue.push(Array.isArray(args) ? args.slice() : args);
+            return this;
+        }
+
         async exec() {
             const replies = [];
             for (const args of this.queue) {
@@ -524,6 +534,60 @@ test("withNamespace multi prefixes keys without relying on _execute* internals",
     assert.deepEqual(calls[2].args, ["GET", "alpha:planet"]);
     assert.deepEqual(calls[3].args, ["SET", "planet", "earth"]);
     assert.deepEqual(calls[4].args, ["GET", "planet"]);
+});
+
+test("multi waits for command specs before rewriting server-discovered commands", async () => {
+    const { client, calls } = createPublicMultiOnlyFakeClient({
+        commandResponse: [["customkey", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+
+    transaction.addCommand(["CUSTOMKEY", "new"]);
+    assert.equal(calls.length, 0);
+
+    await transaction.exec();
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["CUSTOMKEY", "alpha:new"]);
+});
+
+test("multi sendCommand uses the captured namespace context", async () => {
+    const { client, calls } = createPublicMultiOnlyFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+
+    transaction.sendCommand(["GET", "planet"]);
+    await transaction.execAsPipeline();
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["GET", "alpha:planet"]);
+});
+
+test("multi preserves queue order while waiting for command specs", async () => {
+    const { client, calls } = createPublicMultiOnlyFakeClient({
+        commandResponse: [
+            ["get", 2, ["readonly"], 1, 1, 1],
+            ["set", -3, ["write"], 1, 1, 1],
+        ],
+    });
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+
+    transaction.set("first", "1");
+    transaction.rawBypassCommand(["PING"]);
+    transaction.get("second");
+    await transaction.exec();
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "alpha:first", "1"]);
+    assert.deepEqual(calls[2].args, ["PING"]);
+    assert.deepEqual(calls[3].args, ["GET", "alpha:second"]);
 });
 
 test("raw multi bypasses namespace prefixes", async () => {
