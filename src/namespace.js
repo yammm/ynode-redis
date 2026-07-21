@@ -514,7 +514,7 @@ export function attachNamespace(client, initialNamespace) {
             }
 
             flushPendingRewritesPromise = (async () => {
-                const rewrites = pendingRewrites.splice(0);
+                const rewrites = pendingRewrites.slice();
                 if (client.isOpen && !commandSpecsLoaded) {
                     await loadCommandSpecs();
                 }
@@ -523,6 +523,7 @@ export function attachNamespace(client, initialNamespace) {
                     const rewrittenArgs = namespacedArgs(args, prefix, prefixBuffer);
                     copyRewrittenCommandArgs(args, rewrittenArgs);
                 }
+                pendingRewrites.splice(0, rewrites.length);
             })();
 
             try {

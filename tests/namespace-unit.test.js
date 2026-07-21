@@ -590,6 +590,28 @@ test("multi preserves queue order while waiting for command specs", async () => 
     assert.deepEqual(calls[3].args, ["GET", "alpha:second"]);
 });
 
+test("multi retry remains fail-closed after a deferred rewrite failure", async () => {
+    const { client, calls } = createPublicMultiOnlyFakeClient({ commandResponse: [] });
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+
+    transaction.addCommand(["FUTUREMOVE", "key"]);
+
+    await assert.rejects(transaction.exec(), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+        return /FUTUREMOVE.*has no available key metadata/.test(error.message);
+    });
+    await assert.rejects(transaction.exec(), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+        return /FUTUREMOVE.*has no available key metadata/.test(error.message);
+    });
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"]],
+    );
+});
+
 test("raw multi bypasses namespace prefixes", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [
