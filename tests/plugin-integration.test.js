@@ -3,18 +3,27 @@ import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
 import { test } from "node:test";
 
+import Fastify from "fastify";
+
 import redisPlugin from "../src/plugin.js";
 
 function createFastifyHarness() {
     const hooks = new Map();
+    const logs = {
+        debug: [],
+        info: [],
+        warn: [],
+        error: [],
+        trace: [],
+    };
 
     const fastify = {
         log: {
-            debug: () => {},
-            info: () => {},
-            warn: () => {},
-            error: () => {},
-            trace: () => {},
+            debug: (...args) => logs.debug.push(args),
+            info: (...args) => logs.info.push(args),
+            warn: (...args) => logs.warn.push(args),
+            error: (...args) => logs.error.push(args),
+            trace: (...args) => logs.trace.push(args),
         },
         hasDecorator(name) {
             return Object.prototype.hasOwnProperty.call(this, name);
@@ -27,7 +36,7 @@ function createFastifyHarness() {
         },
     };
 
-    return { fastify, hooks };
+    return { fastify, hooks, logs };
 }
 
 function hasRedisServerBinary() {
@@ -228,6 +237,9 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     const tenantA = fastify.redis.withNamespace("alpha");
     const tenantB = fastify.redis.withNamespace("beta");
 
+    assert.equal(tenantA.readiness().namespace, "alpha");
+    assert.equal((await tenantA.healthcheck()).namespace, "alpha");
+
     await tenantA.set(logicalSharedKey, "a");
     await tenantB.set(logicalSharedKey, "b");
 
@@ -236,6 +248,30 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     assert.equal(await fastify.redis.raw.get(`alpha:${logicalSharedKey}`), "a");
     assert.equal(await fastify.redis.raw.get(`beta:${logicalSharedKey}`), "b");
     assert.equal(fastify.redis.namespace, undefined);
+
+    const alreadyPrefixedLogicalKey = `alpha:${key}:logical`;
+    await tenantA.set(alreadyPrefixedLogicalKey, "still-logical");
+    assert.equal(await tenantA.get(alreadyPrefixedLogicalKey), "still-logical");
+    assert.equal(
+        await fastify.redis.raw.get(`alpha:${alreadyPrefixedLogicalKey}`),
+        "still-logical",
+    );
+    assert.equal(await fastify.redis.raw.get(alreadyPrefixedLogicalKey), null);
+
+    const hashKey = `${key}:hash`;
+    await tenantA.hSet(hashKey, { field: "value" });
+    const hashEntries = [];
+    for await (const page of tenantA.hScanIterator(hashKey)) {
+        hashEntries.push(...page);
+    }
+    assert.deepEqual(hashEntries, [{ field: "field", value: "value" }]);
+
+    const sortSourceKey = `${key}:sort-source`;
+    const sortDestinationKey = `${key}:sort-destination`;
+    await tenantA.rPush(sortSourceKey, ["2", "1"]);
+    await tenantA.sendCommand(["SORT", sortSourceKey, "STORE", sortDestinationKey]);
+    assert.deepEqual(await tenantA.lRange(sortDestinationKey, 0, -1), ["1", "2"]);
+    assert.equal(await fastify.redis.raw.exists(sortDestinationKey), 0);
 
     const multiKey = `${key}:multi`;
     const transactionA = tenantA.multi();
@@ -298,18 +334,78 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     assert.equal(fastify.redis.isOpen, false);
 });
 
+test("plugin registers and decorates a real Fastify instance", async (t) => {
+    const redis = await startRedis();
+    if (!redis) {
+        t.skip("No REDIS_URL provided or local redis-server cannot be started in this environment");
+        return;
+    }
+    t.after(async () => {
+        await redis.stop();
+    });
+
+    const fastify = Fastify();
+    t.after(async () => {
+        if (fastify.redis?.isOpen) {
+            await fastify.close();
+        }
+    });
+
+    await fastify.register(redisPlugin, {
+        url: redis.url,
+        name: "ynode-redis-fastify-integration-test",
+    });
+    await fastify.ready();
+
+    assert.equal(fastify.hasDecorator("redis"), true);
+    assert.equal(await fastify.redis.ping(), "PONG");
+
+    await fastify.close();
+    assert.equal(fastify.redis.isOpen, false);
+});
+
 test("plugin prevents duplicate registration on the same fastify instance", async () => {
     const { fastify, hooks } = createFastifyHarness();
 
     await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
+    assert.equal(fastify.redis.options.name, "@ynode/redis");
+
+    let optionReads = 0;
+    const duplicateOptions = new Proxy(
+        {},
+        {
+            get() {
+                ++optionReads;
+                throw new Error("duplicate options must not be read");
+            },
+        },
+    );
 
     await assert.rejects(async () => {
-        await redisPlugin(fastify, { url: "redis://127.0.0.1:6379" });
+        await redisPlugin(fastify, duplicateOptions);
     }, /already been registered/);
+    assert.equal(optionReads, 0);
 
     const onClose = hooks.get("onClose");
     assert.equal(typeof onClose, "function");
     await onClose();
+});
+
+test("plugin keeps plugin-only options out of node-redis configuration", async () => {
+    const { fastify, hooks } = createFastifyHarness();
+
+    await redisPlugin(fastify, {
+        url: "redis://127.0.0.1:6379",
+        name: "ynode-redis-options-test",
+        namespace: "tenant",
+        startupTimeout: 250,
+    });
+
+    assert.equal(fastify.redis.options.name, "ynode-redis-options-test");
+    assert.equal(fastify.redis.options.namespace, undefined);
+    assert.equal(fastify.redis.options.startupTimeout, undefined);
+
+    await hooks.get("onClose")();
 });
 
 test("plugin startup fails fast when Redis is unreachable", async () => {
@@ -333,6 +429,35 @@ test("plugin startup fails fast when Redis is unreachable", async () => {
     });
 
     await onClose();
+});
+
+test("plugin fetches connection metadata once per ready state", async () => {
+    const { fastify, hooks, logs } = createFastifyHarness();
+    await redisPlugin(fastify, {
+        url: "redis://127.0.0.1:6379",
+        startupTimeout: 250,
+    });
+
+    const commands = [];
+    fastify.redis.connect = async () => {
+        fastify.redis.emit("ready");
+    };
+    fastify.redis.sendCommand = async (args) => {
+        commands.push(args);
+        return "id=42 addr=127.0.0.1:6379\n";
+    };
+
+    await hooks.get("onReady")();
+
+    assert.deepEqual(commands, [["CLIENT", "INFO"]]);
+    assert.equal(logs.info.length, 1);
+
+    fastify.redis.emit("ready");
+    await waitForAssertion(() => {
+        assert.equal(commands.length, 2);
+        assert.equal(logs.info.length, 2);
+    });
+    assert.deepEqual(commands[1], ["CLIENT", "INFO"]);
 });
 
 test("plugin startup times out when connect does not resolve", async () => {
@@ -370,6 +495,47 @@ test("plugin startup times out when connect does not resolve", async () => {
     await onClose();
 });
 
+test("plugin rejects with startup timeout before teardown finishes", async () => {
+    const { fastify, hooks } = createFastifyHarness();
+    await redisPlugin(fastify, {
+        url: "redis://127.0.0.1:6379",
+        startupTimeout: 25,
+    });
+
+    const onReady = hooks.get("onReady");
+    let rejectConnect;
+    let releaseDestroy;
+    const destroyGate = new Promise((resolve) => {
+        releaseDestroy = resolve;
+    });
+    fastify.redis.connect = async () =>
+        new Promise((resolve, reject) => {
+            rejectConnect = reject;
+        });
+    fastify.redis.destroy = async () => {
+        await destroyGate;
+        markClientOpen(fastify.redis, false);
+        rejectConnect(new Error("socket closed during teardown"));
+    };
+
+    const onReadyResult = onReady().then(
+        () => ({ status: "resolved" }),
+        (error) => ({ error, status: "rejected" }),
+    );
+
+    try {
+        const result = await Promise.race([
+            onReadyResult,
+            delay(200).then(() => ({ status: "still-pending" })),
+        ]);
+        assert.equal(result.status, "rejected");
+        assert.equal(result.error?.code, "REDIS_STARTUP_TIMEOUT");
+    } finally {
+        releaseDestroy();
+        await onReadyResult;
+    }
+});
+
 test("plugin rejects invalid startupTimeout values", async () => {
     const { fastify } = createFastifyHarness();
 
@@ -379,6 +545,19 @@ test("plugin rejects invalid startupTimeout values", async () => {
             startupTimeout: -1,
         });
     }, /startupTimeout must be a non-negative number in milliseconds/);
+    assert.equal(fastify.hasDecorator("redis"), false);
+});
+
+test("plugin rejects colliding namespace separators before decoration", async () => {
+    const { fastify } = createFastifyHarness();
+
+    await assert.rejects(async () => {
+        await redisPlugin(fastify, {
+            namespace: "alpha:beta",
+            url: "redis://127.0.0.1:6379",
+        });
+    }, /Redis namespace must not contain ':'/);
+    assert.equal(fastify.hasDecorator("redis"), false);
 });
 
 test("plugin startup does not abort the client when connect resolves before timeout", async () => {
@@ -453,6 +632,42 @@ test("plugin startup fails when CLIENT INFO is denied", async (t) => {
     await onClose();
 });
 
+test("connection lifecycle logs redact Redis URL passwords", async () => {
+    const { fastify, logs } = createFastifyHarness();
+    const password = "do-not-log-this";
+    await redisPlugin(fastify, {
+        url: `redis://default:${password}@127.0.0.1:6379`,
+    });
+
+    fastify.redis.emit("error", new Error("connection failed"));
+    fastify.redis.emit("reconnecting");
+    fastify.redis.emit("end");
+
+    const output = JSON.stringify(logs);
+    assert.doesNotMatch(output, new RegExp(password));
+    assert.match(output, /redis:\/\/default:\*\*\*@127\.0\.0\.1:6379/);
+});
+
+test("onClose absorbs close errors and logs a credential-safe label", async () => {
+    const { fastify, hooks, logs } = createFastifyHarness();
+    const password = "close-secret";
+    await redisPlugin(fastify, {
+        url: `redis://default:${password}@127.0.0.1:6379`,
+    });
+
+    markClientOpen(fastify.redis, true);
+    fastify.redis.close = async () => {
+        throw new Error("close failed");
+    };
+
+    await hooks.get("onClose")();
+
+    assert.equal(logs.warn.length, 1);
+    const output = JSON.stringify(logs.warn);
+    assert.doesNotMatch(output, new RegExp(password));
+    assert.match(output, /Error closing Redis client/);
+});
+
 test("onClose prefers close, then quit, then destroy/disconnect fallbacks", async () => {
     const scenarios = [
         { name: "close", expectedMethod: "close", removeMethod: null },
@@ -482,7 +697,7 @@ test("onClose prefers close, then quit, then destroy/disconnect fallbacks", asyn
         fastify.redis.quit = async () => {
             calls.quit += 1;
         };
-        fastify.redis.destroy = async () => {
+        fastify.redis.destroy = () => {
             calls.destroy += 1;
         };
         fastify.redis.disconnect = async () => {

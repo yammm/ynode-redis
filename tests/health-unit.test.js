@@ -61,3 +61,19 @@ test("attachHealth returns a non-throwing unhealthy payload on ping errors", asy
     assert.equal(health.error?.message, "socket closed");
     assert.equal(health.error?.code, "ECONNRESET");
 });
+
+test("attachHealth accepts Buffer PONG responses from type-mapped clients", async () => {
+    const client = {
+        isOpen: true,
+        isReady: true,
+        async sendCommand() {
+            return Buffer.from("PONG");
+        },
+    };
+
+    attachHealth(client);
+
+    const health = await client.healthcheck();
+    assert.equal(health.ok, true);
+    assert.equal(health.ping, "PONG");
+});

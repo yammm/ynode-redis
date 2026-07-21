@@ -10,7 +10,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 10_000;
  * @param {object} [options] - Plugin options.
  * @returns {number} Timeout in milliseconds.
  */
-function startupTimeoutMs(options) {
+export function startupTimeoutMs(options) {
     const timeout = options?.startupTimeout;
     if (timeout === undefined || timeout === null) {
         return DEFAULT_STARTUP_TIMEOUT_MS;
@@ -91,9 +91,10 @@ async function startupWithTimeout(client, timeoutMs, startupFlow) {
                 return;
             }
             settled = true;
-            void abortStartup(client).finally(() => {
-                reject(startupTimeoutError(timeoutMs));
-            });
+            reject(startupTimeoutError(timeoutMs));
+
+            // Fire-and-forget forced teardown after preserving timeout error identity.
+            void abortStartup(client);
         }, timeoutMs);
     });
 
@@ -117,10 +118,11 @@ async function startupWithTimeout(client, timeoutMs, startupFlow) {
  * management, logging, and graceful shutdown.
  * @param {FastifyInstance} fastify - Fastify server instance.
  * @param {object} client - Redis client instance.
- * @param {object} [options] - Plugin options (used for name, url, startupTimeout).
+ * @param {object} [options] - Plugin options (used for url and startupTimeout).
  */
 export function attachLifecycle(fastify, client, options) {
     let info;
+    let startupComplete = false;
     const startupTimeout = startupTimeoutMs(options);
 
     // Initiating a connection to the Redis server
@@ -128,12 +130,15 @@ export function attachLifecycle(fastify, client, options) {
 
     // Connection established and ready to accept commands
     client.on("ready", async () => {
+        if (!startupComplete) {
+            return;
+        }
+
         try {
-            await client.sendCommand(["CLIENT", "SETNAME", options?.name ?? "@ynode/redis"]);
             info = await clientInfo(client);
             fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
         } catch (error) {
-            fastify.log.trace({ err: error }, `Redis CLIENT SETNAME or INFO error has occurred`);
+            fastify.log.trace({ err: error }, `Redis CLIENT INFO error has occurred`);
         }
     });
 
@@ -163,6 +168,8 @@ export function attachLifecycle(fastify, client, options) {
         await startupWithTimeout(client, startupTimeout, async () => {
             await client.connect();
             info = await clientInfo(client);
+            startupComplete = true;
+            fastify.log.info(`Redis client is ready to use ${connectionLabel(info, options)}`);
         });
     });
 

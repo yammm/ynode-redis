@@ -26,13 +26,20 @@ export interface RedisHealthcheckResult extends RedisReadinessStatus {
     error?: RedisHealthError;
 }
 
-export interface NamespacedRedisClientType extends RedisClientType {
-    namespace?: string;
-    raw: RedisClientType;
-    withNamespace(namespace?: string): NamespacedRedisClientType;
+export interface RedisNamespaceHelpers {
+    readonly raw: RedisClientType;
+    withNamespace(namespace?: string): ScopedRedisClientType;
     withoutNamespace<T>(callback: () => T): T;
     readiness(): RedisReadinessStatus;
     healthcheck(): Promise<RedisHealthcheckResult>;
+}
+
+export interface NamespacedRedisClientType extends RedisClientType, RedisNamespaceHelpers {
+    namespace?: string;
+}
+
+export interface ScopedRedisClientType extends RedisClientType, RedisNamespaceHelpers {
+    readonly namespace?: string;
 }
 
 declare module "fastify" {

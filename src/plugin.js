@@ -32,26 +32,30 @@ import { createClient } from "redis";
 
 import { assertRedisNotRegistered } from "./guard.js";
 import { attachHealth } from "./health.js";
-import { attachLifecycle } from "./lifecycle.js";
-import { attachNamespace } from "./namespace.js";
+import { attachLifecycle, startupTimeoutMs } from "./lifecycle.js";
+import { attachNamespace, normalizeNamespace } from "./namespace.js";
 
 /**
  * This plugin adds a "redis" decorator to the Fastify server instance,
  * allowing for easy access to the Redis client.
  *
  * @param {FastifyInstance} fastify The Fastify instance.
- * @param {object} options Plugin options, directly passed to redis.createClient.
+ * @param {object} options Plugin options. Keys other than `namespace` and
+ *   `startupTimeout` are passed to redis.createClient.
  * @param {string} [options.name] Optionally set a connection name. Useful for debugging
  * @param {string} [options.namespace] Optional key namespace prefix for Redis key commands
  * @param {number} [options.startupTimeout=10000] Startup timeout in milliseconds. Set to 0 to disable.
  */
 export default fp(
-    async function (fastify, options) {
-        const { namespace, ...clientOptions } = options ?? {};
-        const client = createClient(clientOptions);
+    async function redisPlugin(fastify, options) {
         assertRedisNotRegistered(fastify);
+        startupTimeoutMs(options);
+        const { namespace, startupTimeout: _startupTimeout, ...clientOptions } = options ?? {};
+        const normalizedNamespace = normalizeNamespace(namespace);
+        clientOptions.name ??= "@ynode/redis";
+        const client = createClient(clientOptions);
 
-        attachNamespace(client, namespace);
+        attachNamespace(client, normalizedNamespace);
         attachHealth(client);
 
         // sharing is caring

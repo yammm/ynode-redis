@@ -55,6 +55,13 @@ function createFakeClient({ commandResponse, isOpen = true } = {}) {
         async set(key, value) {
             return this.sendCommand(["SET", key, value]);
         },
+        async *hScanIterator(key) {
+            const reply = await this.sendCommand(["HSCAN", key, "0"]);
+            yield reply.args[1];
+        },
+        namespaceSnapshot() {
+            return this.namespace;
+        },
         async _executeMulti(commands) {
             const replies = [];
             for (const command of commands) {
@@ -76,10 +83,12 @@ function createFakeClient({ commandResponse, isOpen = true } = {}) {
             const command = String(args?.[0] ?? "").toUpperCase();
 
             if (command === "COMMAND") {
-                if (commandResponse instanceof Error) {
-                    throw commandResponse;
+                const response =
+                    typeof commandResponse === "function" ? commandResponse() : commandResponse;
+                if (response instanceof Error) {
+                    throw response;
                 }
-                return commandResponse ?? [];
+                return response ?? [];
             }
 
             return { args, options };
@@ -242,7 +251,7 @@ test("attachNamespace prefixes command keys and supports runtime namespace updat
     assert.equal(client.namespace, "romulan");
 
     await client.sendCommand(["GET", "romulan:counter"]);
-    assert.deepEqual(calls[3].args, ["GET", "romulan:counter"]);
+    assert.deepEqual(calls[3].args, ["GET", "romulan:romulan:counter"]);
 
     client.namespace = "";
     assert.equal(client.namespace, undefined);
@@ -350,6 +359,26 @@ test("withNamespace normalizes namespace input and supports unscoped clients", a
     assert.equal(client.namespace, "global");
 });
 
+test("namespace values reserve embedded colons to prevent cross-scope key collisions", () => {
+    const { client: invalidInitialClient } = createFakeClient();
+    assert.throws(() => attachNamespace(invalidInitialClient, "alpha:beta"), {
+        name: "TypeError",
+        message: "Redis namespace must not contain ':'",
+    });
+
+    const { client } = createFakeClient();
+    attachNamespace(client, "global");
+
+    assert.throws(() => client.withNamespace("alpha:beta"), {
+        name: "TypeError",
+        message: "Redis namespace must not contain ':'",
+    });
+    assert.throws(() => {
+        client.namespace = "alpha:beta";
+    }, TypeError);
+    assert.equal(client.namespace, "global");
+});
+
 test("withNamespace cache evicts least recently used scoped clients", () => {
     const { client } = createFakeClient();
     const scopedCacheLimit = 256;
@@ -401,6 +430,47 @@ test("scoped clients keep raw and withoutNamespace unprefixed and reject namespa
     assert.deepEqual(calls[1].args, ["GET", "codex:status"]);
     assert.deepEqual(calls[2].args, ["GET", "status"]);
     assert.deepEqual(calls[3].args, ["GET", "status"]);
+});
+
+test("scoped and raw async iterators restore their namespace context for every page", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["hscan", -3, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const scopedIterator = client.withNamespace("alpha").hScanIterator("hash");
+    const rawIterator = client.raw.hScanIterator("hash");
+
+    assert.deepEqual(await scopedIterator.next(), { value: "alpha:hash", done: false });
+    assert.deepEqual(await rawIterator.next(), { value: "hash", done: false });
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["HSCAN", "alpha:hash", "0"]);
+    assert.deepEqual(calls[2].args, ["HSCAN", "hash", "0"]);
+});
+
+test("methods invoked through scoped and raw clients observe their active namespace", () => {
+    const { client } = createFakeClient();
+
+    attachNamespace(client, "global");
+
+    assert.equal(client.namespaceSnapshot(), "global");
+    assert.equal(client.withNamespace("alpha").namespaceSnapshot(), "alpha");
+    assert.equal(client.raw.namespaceSnapshot(), undefined);
+});
+
+test("keys containing namespace text remain distinct logical string and Buffer keys", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "alpha");
+
+    await client.sendCommand(["GET", "alpha:key"]);
+    await client.sendCommand(["GET", Buffer.from("alpha:key")]);
+
+    assert.deepEqual(calls[1].args, ["GET", "alpha:alpha:key"]);
+    assert.deepEqual(calls[2].args, ["GET", Buffer.from("alpha:alpha:key")]);
 });
 
 test("withNamespace applies scoped context to multi exec and execAsPipeline", async () => {
@@ -495,6 +565,21 @@ test("scoped multi keeps captured namespace when global namespace changes", asyn
     assert.deepEqual(calls[2].args, ["GET", "alpha:status"]);
 });
 
+test("multi prefixes exactly once while preserving already-prefixed logical keys", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+
+    transaction.get("key").get("alpha:key");
+    await transaction.exec();
+
+    assert.deepEqual(calls[1].args, ["GET", "alpha:key"]);
+    assert.deepEqual(calls[2].args, ["GET", "alpha:alpha:key"]);
+});
+
 test("dynamic-key script commands are namespaced even when COMMAND introspection fails", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: new Error("NOPERM"),
@@ -508,6 +593,104 @@ test("dynamic-key script commands are namespaced even when COMMAND introspection
     assert.deepEqual(calls[0].args, ["COMMAND"]);
     assert.deepEqual(calls[1].args, ["EVAL", "return ARGV[1]", "1", "codex:planet", "arg1"]);
     assert.deepEqual(calls[2].args, ["FCALL", "myfunc", "2", "codex:earth", "codex:mars", "arg1"]);
+});
+
+test("movable-key commands prefix every resolved key position", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [
+            ["lmpop", -4, ["write", "movablekeys"], 0, 0, 0],
+            ["msetex", -5, ["write", "movablekeys"], 0, 0, 0],
+            ["sort", -2, ["write", "movablekeys"], 1, 1, 1],
+            ["sort_ro", -2, ["readonly", "movablekeys"], 1, 1, 1],
+            ["xreadgroup", -7, ["write", "movablekeys"], 0, 0, 0],
+        ],
+    });
+
+    attachNamespace(client, "alpha");
+
+    await client.sendCommand(["LMPOP", "2", "jobs", "backup", "LEFT"]);
+    await client.sendCommand(["MSETEX", "2", "one", "1", "two", "2", "PX", "1000"]);
+    await client.sendCommand([
+        "SORT",
+        "items",
+        "BY",
+        "NOSORT",
+        "GET",
+        "#",
+        "GET",
+        "profile:*",
+        "STORE",
+        "sorted",
+    ]);
+    await client.sendCommand(["SORT_RO", "readonly-items", "GET", "profile:*"]);
+    await client.sendCommand([
+        "XREADGROUP",
+        "GROUP",
+        "STREAMS",
+        "consumer",
+        "COUNT",
+        "1",
+        "STREAMS",
+        "orders",
+        "events",
+        ">",
+        "0",
+    ]);
+
+    assert.deepEqual(calls[1].args, ["LMPOP", "2", "alpha:jobs", "alpha:backup", "LEFT"]);
+    assert.deepEqual(calls[2].args, [
+        "MSETEX",
+        "2",
+        "alpha:one",
+        "1",
+        "alpha:two",
+        "2",
+        "PX",
+        "1000",
+    ]);
+    assert.deepEqual(calls[3].args, [
+        "SORT",
+        "alpha:items",
+        "BY",
+        "NOSORT",
+        "GET",
+        "#",
+        "GET",
+        "alpha:profile:*",
+        "STORE",
+        "alpha:sorted",
+    ]);
+    assert.deepEqual(calls[4].args, ["SORT_RO", "alpha:readonly-items", "GET", "alpha:profile:*"]);
+    assert.deepEqual(calls[5].args, [
+        "XREADGROUP",
+        "GROUP",
+        "STREAMS",
+        "consumer",
+        "COUNT",
+        "1",
+        "STREAMS",
+        "alpha:orders",
+        "alpha:events",
+        ">",
+        "0",
+    ]);
+});
+
+test("unsupported server-discovered movable-key commands fail closed", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["futuremove", -2, ["write", "movablekeys"], 0, 0, 0]],
+    });
+
+    attachNamespace(client, "alpha");
+
+    await assert.rejects(client.sendCommand(["FUTUREMOVE", "key"]), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+        return /FUTUREMOVE.*cannot namespace it safely/.test(error.message);
+    });
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"]],
+    );
 });
 
 test("withNamespace prefixes commands that route through _self.sendCommand", async () => {
@@ -559,4 +742,71 @@ test("attachNamespace falls back to built-in command specs when COMMAND introspe
     assert.deepEqual(calls[0].args, ["COMMAND"]);
     assert.deepEqual(calls[1].args, ["GET", "klingon:key"]);
     assert.deepEqual(calls[2].args, ["PING"]);
+});
+
+test("fallback specs cover common string, blocking, probabilistic, and stream commands", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: new Error("NOPERM"),
+    });
+
+    attachNamespace(client, "klingon");
+
+    await client.sendCommand(["SETNX", "lock", "1"]);
+    await client.sendCommand(["PSETEX", "cache", "1000", "value"]);
+    await client.sendCommand(["BLPOP", "primary", "backup", "0"]);
+    await client.sendCommand(["PFCOUNT", "daily", "monthly"]);
+    await client.sendCommand(["XADD", "events", "*", "type", "created"]);
+    await client.sendCommand(["DUMP", "archive"]);
+    await client.sendCommand(["RESTORE", "restored", "0", "payload"]);
+    await client.sendCommand(["MOVE", "relocated", "2"]);
+
+    assert.deepEqual(calls[1].args, ["SETNX", "klingon:lock", "1"]);
+    assert.deepEqual(calls[2].args, ["PSETEX", "klingon:cache", "1000", "value"]);
+    assert.deepEqual(calls[3].args, ["BLPOP", "klingon:primary", "klingon:backup", "0"]);
+    assert.deepEqual(calls[4].args, ["PFCOUNT", "klingon:daily", "klingon:monthly"]);
+    assert.deepEqual(calls[5].args, ["XADD", "klingon:events", "*", "type", "created"]);
+    assert.deepEqual(calls[6].args, ["DUMP", "klingon:archive"]);
+    assert.deepEqual(calls[7].args, ["RESTORE", "klingon:restored", "0", "payload"]);
+    assert.deepEqual(calls[8].args, ["MOVE", "klingon:relocated", "2"]);
+});
+
+test("unknown commands fail closed when introspection is unavailable", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: new Error("NOPERM"),
+    });
+
+    attachNamespace(client, "klingon");
+
+    await assert.rejects(client.sendCommand(["MODULEKEY", "unscoped"]), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+        return /MODULEKEY has no available key metadata/.test(error.message);
+    });
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"]],
+    );
+});
+
+test("ready refreshes command specs after an earlier introspection failure", async () => {
+    let introspectionAllowed = false;
+    const { client, calls, listeners } = createFakeClient({
+        commandResponse() {
+            return introspectionAllowed
+                ? [["customkey", 2, ["readonly"], 1, 1, 1]]
+                : new Error("NOPERM");
+        },
+    });
+
+    attachNamespace(client, "klingon");
+
+    await client.sendCommand(["GET", "existing"]);
+    introspectionAllowed = true;
+    listeners.get("ready")();
+    await new Promise((resolve) => setImmediate(resolve));
+    await client.sendCommand(["CUSTOMKEY", "new"]);
+
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"], ["GET", "klingon:existing"], ["COMMAND"], ["CUSTOMKEY", "klingon:new"]],
+    );
 });

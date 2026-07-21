@@ -47,7 +47,10 @@ export function attachHealth(client) {
         value: async () => {
             const startedAtMs = Date.now();
             try {
-                const ping = await sendRawCommand(["PING"]);
+                const pingResponse = await sendRawCommand(["PING"]);
+                const ping = Buffer.isBuffer(pingResponse)
+                    ? pingResponse.toString("utf8")
+                    : String(pingResponse);
                 return {
                     ...readiness(),
                     ok: ping === "PONG",

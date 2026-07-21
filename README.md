@@ -18,26 +18,15 @@ A lightweight **Fastify** plugin that exposes a single **node‑redis** client (
 
 ## Installation
 
-Install the package and its required peer dependency, `redis`.
+Requires Node.js 20 or newer, Fastify 5, node-redis 6, and Redis server 7.2 or newer. Install the package and its Redis peer dependency:
 
 ```sh
 npm install @ynode/redis redis
 ```
 
-## Basic Usage
-
-```javascript
-import redis from "@ynode/redis";
-
-if (fastify.argv.redis) {
-    // connect to redis
-    await fastify.register(redis, { url: fastify.argv.redis });
-}
-```
-
 ## Usage
 
-Register the plugin with your Fastify instance. Any options you provide are passed directly to the underlying `node-redis` `createClient` method.
+Register the plugin with your Fastify instance. The plugin consumes `namespace` and `startupTimeout`; all other options are passed to the underlying node-redis `createClient` method.
 
 ```javascript
 import Fastify from "fastify";
@@ -48,7 +37,7 @@ const fastify = Fastify({
 });
 
 // Register the plugin with options
-fastify.register(fastifyRedis, {
+await fastify.register(fastifyRedis, {
     url: "redis://localhost:6379",
 });
 
@@ -78,6 +67,8 @@ This plugin manages Redis connection lifecycle using Fastify hooks:
 - Closes the Redis client during Fastify shutdown (`onClose`)
 
 Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()` rejects and the server will not start.
+
+Startup is bounded to 10 seconds by default. Set `startupTimeout: 0` to use node-redis connection behavior without a plugin-level deadline.
 
 ## Key Namespacing
 
@@ -141,6 +132,14 @@ rawTransaction.set("status", "literal");
 await rawTransaction.exec(); // operates on literal "status"
 ```
 
+Hash, set, and sorted-set scan iterators retain the scope of the client that creates them. Logical keys are always prefixed, even when they already begin with the namespace text; use `raw` when you intentionally have a physical Redis key.
+
+Namespacing is a key-rewriting convenience, not an authorization boundary. Database-wide commands such as `SCAN`, `KEYS`, and `RANDOMKEY` operate on the physical database and are not tenant-filtered. A client returned by `duplicate()` is also independent and is not namespaced or closed by this plugin. Use Redis ACLs or separate databases/instances when hostile tenants must be isolated.
+
+Commands whose key positions Redis reports as movable are rewritten when the plugin has an exact resolver. If an active namespace cannot be applied safely, the command fails closed instead of running against unprefixed keys; use `raw` only when that database-wide access is intentional.
+
+Namespacing rewrites command inputs, not Redis replies. Commands that return key names, such as the pop families, can therefore return their physical prefixed names.
+
 ## Health and Readiness
 
 This plugin exposes simple probe helpers:
@@ -161,7 +160,8 @@ const health = await fastify.redis.healthcheck();
 ### Plugin-specific options
 
 - `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`. Default: `@ynode/redis`
-- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
+- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. `:` is reserved as the separator; a trailing colon is normalized away, while embedded colons are rejected. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
+- `startupTimeout` (`number`, default: `10000`): maximum startup time in milliseconds. Set to `0` to disable the plugin deadline.
 
 ### Redis client options
 
@@ -185,10 +185,10 @@ await app.redis.set("health", "ok");
 
 ## Testing and CI
 
-- `npm test` runs project linting, unit tests, and integration tests.
+- `npm test` runs unit and integration tests. Use `npm run lint` and `npm run format:check` for static checks.
 - Integration tests use `REDIS_URL` when provided.
 - If `REDIS_URL` is not set, tests try to start a local `redis-server` automatically.
-- CI runs on push and pull request, starts a Redis service, and executes `npm test`.
+- CI runs on push and pull request, starts a Redis service, and executes formatting, lint, and test gates.
 
 ## License
 

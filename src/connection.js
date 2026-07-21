@@ -10,7 +10,9 @@ export async function closeClient(client) {
         await client.close();
     } else if (typeof client.quit === "function") {
         await client.quit();
-    } else if (typeof client.destroy === "function" || typeof client.disconnect === "function") {
-        await (client.destroy?.() ?? client.disconnect());
+    } else if (typeof client.destroy === "function") {
+        await client.destroy();
+    } else if (typeof client.disconnect === "function") {
+        await client.disconnect();
     }
 }

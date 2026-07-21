@@ -16,6 +16,16 @@ concurrency:
 jobs:
     test:
         runs-on: ubuntu-latest
+        services:
+            redis:
+                image: redis:7.4-alpine
+                ports:
+                    - 6379:6379
+                options: >-
+                    --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+
+        env:
+            REDIS_URL: redis://127.0.0.1:6379
         strategy:
             fail-fast: false
             matrix:
@@ -34,8 +44,8 @@ jobs:
             - name: Install dependencies
               run: npm ci
 
-            - name: Run lint and tests
-              run: npm test
+            - name: Run format, lint, and tests
+              run: npm run format:check && npm run lint && npm test
 
     docs:
         runs-on: ubuntu-latest

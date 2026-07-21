@@ -1,323 +1,37 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-const DEFAULT_COMMAND_SPECS = new Map([
-    ["APPEND", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["COPY", { firstKey: 1, lastKey: 2, step: 1 }],
-    ["DECR", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["DECRBY", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["DEL", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["EXISTS", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["EXPIRE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["EXPIREAT", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["GET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["GETDEL", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["GETEX", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["GETSET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HDEL", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HEXISTS", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HGET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HGETALL", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HINCRBY", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HINCRBYFLOAT", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HKEYS", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HLEN", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HMGET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HMSET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HSCAN", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HSET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HSTRLEN", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["HVALS", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["INCR", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["INCRBY", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["INCRBYFLOAT", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LINDEX", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LINSERT", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LLEN", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LPOP", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LPOS", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LPUSH", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LPUSHX", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LRANGE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LREM", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LSET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["LTRIM", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["MGET", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["MSET", { firstKey: 1, lastKey: -1, step: 2 }],
-    ["PERSIST", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["PEXPIRE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["PEXPIREAT", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["PTTL", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["RENAME", { firstKey: 1, lastKey: 2, step: 1 }],
-    ["RENAMENX", { firstKey: 1, lastKey: 2, step: 1 }],
-    ["RPOP", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["RPUSH", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["RPUSHX", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SADD", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SCARD", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SDIFF", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["SDIFFSTORE", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["SET", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SETEX", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SINTER", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["SINTERSTORE", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["SISMEMBER", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SMEMBERS", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SMISMEMBER", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SMOVE", { firstKey: 1, lastKey: 2, step: 1 }],
-    ["SPOP", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SRANDMEMBER", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SREM", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SSCAN", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["STRLEN", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["SUNION", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["SUNIONSTORE", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["TOUCH", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["TTL", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["TYPE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["UNLINK", { firstKey: 1, lastKey: -1, step: 1 }],
-    ["ZADD", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZCARD", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZCOUNT", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZINCRBY", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZRANGE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZRANGEBYSCORE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZRANK", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZREM", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZREVRANGE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZREVRANGEBYSCORE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZREVRANK", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZSCORE", { firstKey: 1, lastKey: 1, step: 1 }],
-    ["ZUNIONSTORE", { firstKey: 1, lastKey: -1, step: 1 }],
-]);
+import {
+    applyPrefixToKey,
+    commandNameToken,
+    DEFAULT_COMMAND_SPECS,
+    DEFAULT_KEYLESS_COMMANDS,
+    keyIndexesForCommand,
+    keyIndexesForDynamicCountCommand,
+    keyIndexesForMovableCommand,
+    parseCommandSpecs,
+} from "./namespace-keys.js";
 
-const DYNAMIC_KEY_COUNT_COMMANDS = new Set([
-    "EVAL",
-    "EVAL_RO",
-    "EVALSHA",
-    "EVALSHA_RO",
-    "FCALL",
-    "FCALL_RO",
-]);
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
+const NAMESPACE_UNSAFE_COMMAND_ERROR_CODE = "REDIS_NAMESPACE_UNSAFE_COMMAND";
 
 /**
- * Strips trailing colons and whitespace from a namespace value. Returns empty
- * string for null/undefined.
+ * Strips trailing colons and whitespace from a namespace value. Embedded
+ * colons are rejected because they make distinct namespace/key pairs map to
+ * the same physical Redis key. Returns empty string for null/undefined.
  * @param {*} value - Raw namespace input.
  * @returns {string} Normalized namespace without trailing separator.
  */
-function normalizeNamespace(value) {
+export function normalizeNamespace(value) {
     if (value === undefined || value === null) {
         return "";
     }
 
     const normalized = String(value).trim().replace(/:+$/, "");
+    if (normalized.includes(":")) {
+        throw new TypeError("Redis namespace must not contain ':'");
+    }
     return normalized;
-}
-
-/**
- * Extracts an uppercase command name from a string or Buffer token.
- * @param {string|Buffer} token - First element of a Redis command args array.
- * @returns {string} Uppercase command name, or empty string for unsupported types.
- */
-function commandNameToken(token) {
-    if (typeof token === "string") {
-        return token.toUpperCase();
-    }
-    if (Buffer.isBuffer(token)) {
-        return token.toString("utf8").toUpperCase();
-    }
-    return "";
-}
-
-/**
- * Parses the raw reply from the Redis COMMAND introspection into a Map of
- * command specs keyed by uppercase command name.
- * @param {Array<Array>} reply - Raw COMMAND reply from Redis.
- * @returns {Map<string, object>} Map of command name to key-position spec.
- */
-function parseCommandSpecs(reply) {
-    const specs = new Map();
-    if (!Array.isArray(reply)) {
-        return specs;
-    }
-
-    for (const entry of reply) {
-        if (!Array.isArray(entry) || entry.length < 6) {
-            continue;
-        }
-
-        const name = commandNameToken(entry[0]);
-        const firstKey = Number(entry[3]);
-        const lastKey = Number(entry[4]);
-        const step = Number(entry[5]);
-
-        if (
-            !name ||
-            !Number.isFinite(firstKey) ||
-            !Number.isFinite(lastKey) ||
-            !Number.isFinite(step)
-        ) {
-            continue;
-        }
-
-        specs.set(name, { firstKey, lastKey, step });
-    }
-
-    return specs;
-}
-
-/**
- * Computes the argument indexes that contain Redis keys for a given command
- * spec and argument list.
- * @param {object} spec - Key-position spec with firstKey, lastKey, and step.
- * @param {Array<*>} args - Full command arguments array (command name at index 0).
- * @returns {Array<number>} Indexes into args that hold key values.
- */
-function keyIndexesForCommand(spec, args) {
-    if (!spec || !Array.isArray(args)) {
-        return [];
-    }
-
-    if (spec.firstKey <= 0 || args.length <= 1) {
-        return [];
-    }
-
-    const keysArgCount = args.length - 1;
-    let lastKey = spec.lastKey;
-    if (lastKey < 0) {
-        lastKey = keysArgCount + lastKey + 1;
-    }
-
-    if (lastKey > keysArgCount) {
-        lastKey = keysArgCount;
-    }
-
-    if (lastKey < spec.firstKey) {
-        return [];
-    }
-
-    const indexes = [];
-    const step = spec.step > 0 ? spec.step : 1;
-    for (let index = spec.firstKey; index <= lastKey; index += step) {
-        indexes.push(index);
-    }
-
-    return indexes;
-}
-
-/**
- * Coerces a command argument token to a safe integer value.
- * Handles strings, Buffers, numbers, and BigInts. Returns null when the
- * token cannot be represented as a finite integer within safe bounds.
- * @param {string|Buffer|number|bigint} token - Redis command argument.
- * @returns {number|null} Integer value, or null if conversion fails.
- */
-function integerTokenValue(token) {
-    if (typeof token === "number") {
-        if (!Number.isFinite(token)) {
-            return null;
-        }
-        return Math.trunc(token);
-    }
-
-    if (typeof token === "bigint") {
-        const minSafeInteger = BigInt(Number.MIN_SAFE_INTEGER);
-        const maxSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
-        if (token < minSafeInteger || token > maxSafeInteger) {
-            return null;
-        }
-        return Number(token);
-    }
-
-    const tokenValue = Buffer.isBuffer(token)
-        ? token.toString("utf8")
-        : typeof token === "string"
-          ? token
-          : null;
-    if (tokenValue === null || tokenValue.length === 0) {
-        return null;
-    }
-
-    const parsed = Number.parseInt(tokenValue, 10);
-    return Number.isNaN(parsed) ? null : parsed;
-}
-
-/**
- * Returns key indexes for commands that encode their key count as a runtime
- * argument (EVAL, EVALSHA, FCALL and their read-only variants).
- * @param {string} command - Uppercase command name.
- * @param {Array<*>} args - Full command arguments array.
- * @returns {Array<number>|null} Key indexes, or null when the command is not dynamic.
- */
-function keyIndexesForDynamicCountCommand(command, args) {
-    if (!DYNAMIC_KEY_COUNT_COMMANDS.has(command)) {
-        return null;
-    }
-
-    if (!Array.isArray(args) || args.length < 4) {
-        return [];
-    }
-
-    const keyCount = integerTokenValue(args[2]);
-    if (keyCount === null || keyCount <= 0) {
-        return [];
-    }
-
-    const availableKeys = Math.max(0, args.length - 3);
-    const actualKeyCount = Math.min(keyCount, availableKeys);
-    const indexes = [];
-    for (let offset = 0; offset < actualKeyCount; offset += 1) {
-        indexes.push(3 + offset);
-    }
-
-    return indexes;
-}
-
-/**
- * Prepends a namespace prefix to a Redis key. Supports string, number, bigint,
- * and Buffer keys. Returns the key unchanged if it already starts with the
- * prefix or if the prefix is empty.
- * @param {string|Buffer|number|bigint} key - Original key value.
- * @param {string} prefix - Namespace prefix including trailing colon.
- * @param {Buffer} [prefixBuffer] - Pre-allocated Buffer of the prefix for Buffer keys.
- * @returns {string|Buffer} Prefixed key, or the original if already prefixed.
- */
-function applyPrefixToKey(key, prefix, prefixBuffer) {
-    if (!prefix) {
-        return key;
-    }
-
-    if (Buffer.isBuffer(key)) {
-        if (!prefixBuffer) {
-            prefixBuffer = Buffer.from(prefix);
-        }
-        if (
-            key.length >= prefixBuffer.length &&
-            key.subarray(0, prefixBuffer.length).equals(prefixBuffer)
-        ) {
-            return key;
-        }
-        return Buffer.concat([prefixBuffer, key]);
-    }
-
-    const keyString =
-        typeof key === "string"
-            ? key
-            : typeof key === "number" || typeof key === "bigint"
-              ? String(key)
-              : null;
-
-    if (keyString === null) {
-        return key;
-    }
-
-    if (keyString.startsWith(prefix)) {
-        return key;
-    }
-
-    return `${prefix}${keyString}`;
 }
 
 /**
@@ -331,6 +45,19 @@ function namespaceCompatibilityError(message) {
         `Redis client is incompatible with @ynode/redis namespace interception: ${message}`,
     );
     error.code = NAMESPACE_COMPATIBILITY_ERROR_CODE;
+    return error;
+}
+
+/**
+ * Creates an error for a command whose movable keys cannot be rewritten safely.
+ * @param {string} command - Uppercase Redis command name.
+ * @returns {Error} Error with code REDIS_NAMESPACE_UNSAFE_COMMAND.
+ */
+function namespaceUnsafeCommandError(command, reason = "uses movable keys") {
+    const error = new Error(
+        `Redis command ${command} ${reason}; @ynode/redis cannot namespace it safely.`,
+    );
+    error.code = NAMESPACE_UNSAFE_COMMAND_ERROR_CODE;
     return error;
 }
 
@@ -361,6 +88,51 @@ function probeCommandDispatch(client) {
     }
 
     return { usesPublicSendCommand: false, fallbackInternalClient: internalClient };
+}
+
+/**
+ * Re-enters a captured namespace context whenever an async iterator advances.
+ * Async generator bodies execute in the context of next(), not the context in
+ * which the generator object was created.
+ * @param {*} value - Possible async iterable returned from a client method.
+ * @param {function(function(): *): *} runInContext - Namespace context runner.
+ * @returns {*} Context-bound async iterable, or the original value.
+ */
+function bindAsyncIteratorContext(value, runInContext) {
+    if (!value || typeof value !== "object" || typeof value[Symbol.asyncIterator] !== "function") {
+        return value;
+    }
+
+    const functionCache = new Map();
+    const proxy = new Proxy(value, {
+        get(target, property) {
+            const member = Reflect.get(target, property, target);
+            if (typeof member !== "function") {
+                return member;
+            }
+            if (functionCache.has(property)) {
+                return functionCache.get(property);
+            }
+
+            let wrapped;
+            if (property === Symbol.asyncIterator) {
+                wrapped = (...args) => {
+                    const iterator = runInContext(() => member.apply(target, args));
+                    return iterator === target
+                        ? proxy
+                        : bindAsyncIteratorContext(iterator, runInContext);
+                };
+            } else if (property === "next" || property === "return" || property === "throw") {
+                wrapped = (...args) => runInContext(() => member.apply(target, args));
+            } else {
+                wrapped = member.bind(target);
+            }
+
+            functionCache.set(property, wrapped);
+            return wrapped;
+        },
+    });
+    return proxy;
 }
 
 /**
@@ -410,7 +182,10 @@ function createScopedNamespaceProxy({
                 return functionCache.get(property);
             }
 
-            const wrapped = (...args) => runWithScopedNamespace(() => value.apply(target, args));
+            const wrapped = (...args) => {
+                const result = runWithScopedNamespace(() => value.apply(target, args));
+                return bindAsyncIteratorContext(result, runWithScopedNamespace);
+            };
             functionCache.set(property, wrapped);
             return wrapped;
         },
@@ -450,7 +225,10 @@ function createRawClientProxy(client, runWithoutNamespace) {
                 return functionCache.get(property);
             }
 
-            const wrapped = (...args) => runWithoutNamespace(() => value.apply(target, args));
+            const wrapped = (...args) => {
+                const result = runWithoutNamespace(() => value.apply(target, args));
+                return bindAsyncIteratorContext(result, runWithoutNamespace);
+            };
             functionCache.set(property, wrapped);
             return wrapped;
         },
@@ -481,6 +259,7 @@ export function attachNamespace(client, initialNamespace) {
     let namespacePrefix = namespace ? `${namespace}:` : "";
     let namespacePrefixBuffer = namespacePrefix ? Buffer.from(namespacePrefix) : null;
     const scopedClientCache = new Map();
+    const wrappedMultiClients = new WeakSet();
     const originalMULTI = typeof client.MULTI === "function" ? client.MULTI.bind(client) : null;
     const originalMulti = typeof client.multi === "function" ? client.multi.bind(client) : null;
 
@@ -490,8 +269,11 @@ export function attachNamespace(client, initialNamespace) {
 
     const rawClientProxy = createRawClientProxy(client, withoutNamespace);
 
-    function runWithScopedNamespace(prefix, prefixBuffer, callback) {
-        return scopedNamespaceStore.run({ prefix, prefixBuffer }, callback);
+    function runWithScopedNamespace(scopedNamespace, prefix, prefixBuffer, callback) {
+        return scopedNamespaceStore.run(
+            { namespace: scopedNamespace, prefix, prefixBuffer },
+            callback,
+        );
     }
 
     function captureNamespaceInvocationContext() {
@@ -503,6 +285,7 @@ export function attachNamespace(client, initialNamespace) {
         if (scopedNamespace) {
             return {
                 bypass: false,
+                scopedNamespace: scopedNamespace.namespace,
                 scopedPrefix: scopedNamespace.prefix,
                 scopedPrefixBuffer: scopedNamespace.prefixBuffer,
             };
@@ -519,6 +302,7 @@ export function attachNamespace(client, initialNamespace) {
         if (invocationContext.scopedPrefix !== undefined) {
             return scopedNamespaceStore.run(
                 {
+                    namespace: invocationContext.scopedNamespace,
                     prefix: invocationContext.scopedPrefix,
                     prefixBuffer: invocationContext.scopedPrefixBuffer,
                 },
@@ -544,7 +328,13 @@ export function attachNamespace(client, initialNamespace) {
         return { prefix: namespacePrefix, prefixBuffer: namespacePrefixBuffer };
     }
 
-    async function loadCommandSpecs() {
+    async function loadCommandSpecs(forceRefresh = false) {
+        if (forceRefresh && loadingSpecsPromise) {
+            await loadingSpecsPromise;
+        }
+        if (forceRefresh) {
+            commandSpecsLoaded = false;
+        }
         if (commandSpecsLoaded) {
             return;
         }
@@ -553,7 +343,7 @@ export function attachNamespace(client, initialNamespace) {
             return loadingSpecsPromise;
         }
 
-        loadingSpecsPromise = (async () => {
+        const currentLoadingPromise = (async () => {
             try {
                 const response = await rawInternalSendCommand(["COMMAND"]);
                 const discoveredSpecs = parseCommandSpecs(response);
@@ -566,9 +356,12 @@ export function attachNamespace(client, initialNamespace) {
                 commandSpecsLoaded = true;
             }
         })();
+        loadingSpecsPromise = currentLoadingPromise;
 
-        await loadingSpecsPromise;
-        loadingSpecsPromise = null;
+        await currentLoadingPromise;
+        if (loadingSpecsPromise === currentLoadingPromise) {
+            loadingSpecsPromise = null;
+        }
     }
 
     function namespacedArgs(args, activePrefix, activePrefixBuffer) {
@@ -582,12 +375,27 @@ export function attachNamespace(client, initialNamespace) {
         }
 
         const dynamicKeyIndexes = keyIndexesForDynamicCountCommand(command, args);
+        const movableKeyIndexes =
+            dynamicKeyIndexes === null ? keyIndexesForMovableCommand(command, args) : null;
         const spec = commandSpecs.get(command);
-        const keyIndexes = dynamicKeyIndexes ?? keyIndexesForCommand(spec, args);
+        if (dynamicKeyIndexes === null && movableKeyIndexes === null && spec?.movableKeys) {
+            throw namespaceUnsafeCommandError(command);
+        }
+        if (
+            dynamicKeyIndexes === null &&
+            movableKeyIndexes === null &&
+            !spec &&
+            !DEFAULT_KEYLESS_COMMANDS.has(command)
+        ) {
+            throw namespaceUnsafeCommandError(command, "has no available key metadata");
+        }
+        const keyIndexes =
+            dynamicKeyIndexes ?? movableKeyIndexes ?? keyIndexesForCommand(spec, args);
         if (keyIndexes.length === 0) {
             return args;
         }
 
+        // Preserve non-index own properties attached by node-redis command parsers.
         const rewrittenArgs = Object.assign([...args], args);
         for (const index of keyIndexes) {
             rewrittenArgs[index] = applyPrefixToKey(
@@ -654,6 +462,7 @@ export function attachNamespace(client, initialNamespace) {
                 const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
                     activePrefixForInvocationContext(invocationContext);
                 if (client.isOpen && activePrefix && !commandSpecsLoaded) {
+                    // Fire and forget: addCommand must remain synchronous.
                     void loadCommandSpecs();
                 }
 
@@ -670,10 +479,14 @@ export function attachNamespace(client, initialNamespace) {
         if (!multiClient || typeof multiClient !== "object") {
             return multiClient;
         }
+        if (wrappedMultiClients.has(multiClient)) {
+            return multiClient;
+        }
 
         if (typeof multiClient.addCommand !== "function") {
             return multiClient;
         }
+        wrappedMultiClients.add(multiClient);
 
         const rawAddCommand = multiClient.addCommand.bind(multiClient);
         multiClient.addCommand = wrapMultiAddCommand(rawAddCommand, invocationContext);
@@ -691,9 +504,7 @@ export function attachNamespace(client, initialNamespace) {
 
             const rawMethod = multiClient[methodName].bind(multiClient);
             multiClient[methodName] = (...methodArgs) =>
-                runWithNamespaceInvocationContext(invocationContext, () =>
-                    rawMethod(...methodArgs),
-                );
+                withoutNamespace(() => rawMethod(...methodArgs));
         }
 
         return multiClient;
@@ -730,7 +541,12 @@ export function attachNamespace(client, initialNamespace) {
             getRawClient: () => rawClientProxy,
             withoutNamespace,
             runWithScopedNamespace: (callback) =>
-                runWithScopedNamespace(scopedPrefix, scopedPrefixBuffer, callback),
+                runWithScopedNamespace(
+                    normalizedNamespace,
+                    scopedPrefix,
+                    scopedPrefixBuffer,
+                    callback,
+                ),
         });
 
         if (scopedClientCache.size >= MAX_SCOPED_NAMESPACE_CACHE_SIZE) {
@@ -764,10 +580,13 @@ export function attachNamespace(client, initialNamespace) {
 
     if (typeof client.on === "function") {
         client.on("ready", () => {
-            if (!namespacePrefix) {
+            const hasScopedNamespace = [...scopedClientCache.keys()].some(Boolean);
+            if (!namespacePrefix && !hasScopedNamespace) {
+                commandSpecsLoaded = false;
                 return;
             }
-            void loadCommandSpecs();
+            // Fire and forget: refresh server metadata after every reconnect.
+            void loadCommandSpecs(true);
         });
     }
 
@@ -775,6 +594,13 @@ export function attachNamespace(client, initialNamespace) {
         configurable: true,
         enumerable: true,
         get() {
+            if (bypassNamespaceStore.getStore() === true) {
+                return undefined;
+            }
+            const scopedNamespace = scopedNamespaceStore.getStore();
+            if (scopedNamespace) {
+                return scopedNamespace.namespace || undefined;
+            }
             return namespace || undefined;
         },
         set(value) {
