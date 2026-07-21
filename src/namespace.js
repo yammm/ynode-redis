@@ -242,8 +242,11 @@ function createRawClientProxy(client, runWithoutNamespace) {
  * and MULTI/pipeline command rewriting.
  * @param {object} client - Redis client instance (node-redis v5).
  * @param {string} [initialNamespace] - Default namespace prefix for all key commands.
+ * @param {object} [options] - Namespace interception options.
+ * @param {object|Map} [options.namespaceCommands] - Custom command key metadata.
  */
-export function attachNamespace(client, initialNamespace) {
+export function attachNamespace(client, initialNamespace, options = {}) {
+    const namespaceOptions = options && typeof options === "object" ? options : {};
     const bypassNamespaceStore = new AsyncLocalStorage();
     const scopedNamespaceStore = new AsyncLocalStorage();
     const { usesPublicSendCommand, fallbackInternalClient } = probeCommandDispatch(client);
@@ -252,7 +255,11 @@ export function attachNamespace(client, initialNamespace) {
         fallbackInternalClient && !usesPublicSendCommand
             ? fallbackInternalClient.sendCommand.bind(fallbackInternalClient)
             : rawClientSendCommand;
+    const customCommandSpecs = new Map();
+    const customKeylessCommands = new Set();
+    let serverCommandSpecs = new Map();
     let commandSpecs = new Map(DEFAULT_COMMAND_SPECS);
+    let keylessCommands = new Set(DEFAULT_KEYLESS_COMMANDS);
     let loadingSpecsPromise = null;
     let commandSpecsLoaded = false;
     let namespace = normalizeNamespace(initialNamespace);
@@ -262,6 +269,88 @@ export function attachNamespace(client, initialNamespace) {
     const wrappedMultiClients = new WeakSet();
     const originalMULTI = typeof client.MULTI === "function" ? client.MULTI.bind(client) : null;
     const originalMulti = typeof client.multi === "function" ? client.multi.bind(client) : null;
+
+    function normalizeNamespaceCommandSpec(commandName, spec) {
+        const command = commandNameToken(
+            typeof commandName === "string" ? commandName.trim() : commandName,
+        );
+        if (!command || /\s/.test(command)) {
+            throw new TypeError(
+                "Redis namespace command metadata requires a non-empty command name",
+            );
+        }
+
+        if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+            throw new TypeError(`Redis namespace command ${command} metadata must be an object`);
+        }
+
+        if (spec.keyless === true) {
+            return { command, keyless: true };
+        }
+
+        const firstKey = Number(spec.firstKey);
+        const lastKey = Number(spec.lastKey);
+        const step = spec.step === undefined ? 1 : Number(spec.step);
+        if (
+            !Number.isInteger(firstKey) ||
+            firstKey < 1 ||
+            !Number.isInteger(lastKey) ||
+            lastKey === 0 ||
+            !Number.isInteger(step) ||
+            step < 1
+        ) {
+            throw new TypeError(
+                `Redis namespace command ${command} metadata must define integer firstKey, lastKey, and step positions`,
+            );
+        }
+
+        return { command, spec: { firstKey, lastKey, step } };
+    }
+
+    function rebuildCommandMetadata() {
+        commandSpecs = new Map([
+            ...DEFAULT_COMMAND_SPECS,
+            ...serverCommandSpecs,
+            ...customCommandSpecs,
+        ]);
+        keylessCommands = new Set([...DEFAULT_KEYLESS_COMMANDS, ...customKeylessCommands]);
+        for (const command of customKeylessCommands) {
+            commandSpecs.delete(command);
+        }
+    }
+
+    function registerNamespaceCommand(commandName, spec) {
+        const metadata = normalizeNamespaceCommandSpec(commandName, spec);
+        if (metadata.keyless) {
+            customCommandSpecs.delete(metadata.command);
+            customKeylessCommands.add(metadata.command);
+        } else {
+            customKeylessCommands.delete(metadata.command);
+            customCommandSpecs.set(metadata.command, metadata.spec);
+        }
+        rebuildCommandMetadata();
+        return client;
+    }
+
+    function registerNamespaceCommands(commandDefinitions) {
+        if (commandDefinitions === undefined || commandDefinitions === null) {
+            return client;
+        }
+        if (typeof commandDefinitions !== "object") {
+            throw new TypeError("Redis namespace command metadata must be an object or Map");
+        }
+
+        const entries =
+            commandDefinitions instanceof Map
+                ? commandDefinitions.entries()
+                : Object.entries(commandDefinitions);
+        for (const [commandName, spec] of entries) {
+            registerNamespaceCommand(commandName, spec);
+        }
+        return client;
+    }
+
+    registerNamespaceCommands(namespaceOptions.namespaceCommands);
 
     function withoutNamespace(callback) {
         return bypassNamespaceStore.run(true, callback);
@@ -348,7 +437,8 @@ export function attachNamespace(client, initialNamespace) {
                 const response = await rawInternalSendCommand(["COMMAND"]);
                 const discoveredSpecs = parseCommandSpecs(response);
                 if (discoveredSpecs.size > 0) {
-                    commandSpecs = new Map([...commandSpecs, ...discoveredSpecs]);
+                    serverCommandSpecs = discoveredSpecs;
+                    rebuildCommandMetadata();
                 }
             } catch {
                 // Keep fallback command specs if COMMAND introspection is unavailable.
@@ -385,7 +475,7 @@ export function attachNamespace(client, initialNamespace) {
             dynamicKeyIndexes === null &&
             movableKeyIndexes === null &&
             !spec &&
-            !DEFAULT_KEYLESS_COMMANDS.has(command)
+            !keylessCommands.has(command)
         ) {
             throw namespaceUnsafeCommandError(command, "has no available key metadata");
         }
@@ -694,6 +784,18 @@ export function attachNamespace(client, initialNamespace) {
         configurable: true,
         enumerable: false,
         value: withNamespace,
+    });
+
+    Object.defineProperty(client, "registerNamespaceCommand", {
+        configurable: true,
+        enumerable: false,
+        value: registerNamespaceCommand,
+    });
+
+    Object.defineProperty(client, "registerNamespaceCommands", {
+        configurable: true,
+        enumerable: false,
+        value: registerNamespaceCommands,
     });
 
     Object.defineProperty(client, "raw", {

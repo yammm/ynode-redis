@@ -40,22 +40,28 @@ import { attachNamespace, normalizeNamespace } from "./namespace.js";
  * allowing for easy access to the Redis client.
  *
  * @param {FastifyInstance} fastify The Fastify instance.
- * @param {object} options Plugin options. Keys other than `namespace` and
- *   `startupTimeout` are passed to redis.createClient.
+ * @param {object} options Plugin options. Keys other than `namespace`,
+ *   `namespaceCommands`, and `startupTimeout` are passed to redis.createClient.
  * @param {string} [options.name] Optionally set a connection name. Useful for debugging
  * @param {string} [options.namespace] Optional key namespace prefix for Redis key commands
+ * @param {object|Map} [options.namespaceCommands] Optional custom command key metadata
  * @param {number} [options.startupTimeout=10000] Startup timeout in milliseconds. Set to 0 to disable.
  */
 export default fp(
     async function redisPlugin(fastify, options) {
         assertRedisNotRegistered(fastify);
         startupTimeoutMs(options);
-        const { namespace, startupTimeout: _startupTimeout, ...clientOptions } = options ?? {};
+        const {
+            namespace,
+            namespaceCommands,
+            startupTimeout: _startupTimeout,
+            ...clientOptions
+        } = options ?? {};
         const normalizedNamespace = normalizeNamespace(namespace);
         clientOptions.name ??= "@ynode/redis";
         const client = createClient(clientOptions);
 
-        attachNamespace(client, normalizedNamespace);
+        attachNamespace(client, normalizedNamespace, { namespaceCommands });
         attachHealth(client);
 
         // sharing is caring

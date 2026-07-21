@@ -138,6 +138,23 @@ Namespacing is a key-rewriting convenience, not an authorization boundary. Datab
 
 Commands whose key positions Redis reports as movable are rewritten when the plugin has an exact resolver. If an active namespace cannot be applied safely, the command fails closed instead of running against unprefixed keys; use `raw` only when that database-wide access is intentional.
 
+For Redis modules or custom commands that are not available through `COMMAND` introspection, provide explicit key metadata with `namespaceCommands`:
+
+```javascript
+await fastify.register(fastifyRedis, {
+    namespace: "codex",
+    namespaceCommands: {
+        MODULEKEY: { firstKey: 1, lastKey: 1 },
+        MODULEMSET: { firstKey: 1, lastKey: -1, step: 2 },
+        "MODULE.INFO": { keyless: true },
+    },
+});
+
+fastify.redis.registerNamespaceCommand("MODULEGET", { firstKey: 1, lastKey: 1 });
+```
+
+Command indexes are one-based and refer to the arguments after the command name. Use `{ keyless: true }` only for commands whose arguments are never Redis keys.
+
 Namespacing rewrites command inputs, not Redis replies. Commands that return key names, such as the pop families, can therefore return their physical prefixed names.
 
 ## Health and Readiness
@@ -161,6 +178,7 @@ const health = await fastify.redis.healthcheck();
 
 - `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`. Default: `@ynode/redis`
 - `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. `:` is reserved as the separator; a trailing colon is normalized away, while embedded colons are rejected. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
+- `namespaceCommands` (`object` or `Map`, optional): custom command key metadata for Redis modules or deployments where `COMMAND` introspection is unavailable. Each command can define `{ firstKey, lastKey, step }` key positions or `{ keyless: true }`.
 - `startupTimeout` (`number`, default: `10000`): maximum startup time in milliseconds. Set to `0` to disable the plugin deadline.
 
 ### Redis client options

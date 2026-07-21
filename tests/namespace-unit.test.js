@@ -873,6 +873,82 @@ test("unknown commands fail closed when introspection is unavailable", async () 
     );
 });
 
+test("custom namespace command metadata prefixes commands when introspection is unavailable", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: new Error("NOPERM"),
+    });
+
+    attachNamespace(client, "klingon", {
+        namespaceCommands: {
+            MODULEKEY: { firstKey: 1, lastKey: 1 },
+            MODULEMSET: { firstKey: 1, lastKey: -1, step: 2 },
+        },
+    });
+
+    await client.sendCommand(["MODULEKEY", "unscoped", "value"]);
+    await client.sendCommand(["MODULEMSET", "one", "1", "two", "2"]);
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["MODULEKEY", "klingon:unscoped", "value"]);
+    assert.deepEqual(calls[2].args, ["MODULEMSET", "klingon:one", "1", "klingon:two", "2"]);
+});
+
+test("runtime namespace command registration updates the metadata registry", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [],
+    });
+
+    attachNamespace(client, "klingon");
+
+    await assert.rejects(client.sendCommand(["MODULEKEY", "unscoped"]), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+        return /MODULEKEY has no available key metadata/.test(error.message);
+    });
+
+    client.registerNamespaceCommand("MODULEKEY", { firstKey: 1, lastKey: 1 });
+    await client.sendCommand(["MODULEKEY", "unscoped"]);
+
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"], ["MODULEKEY", "klingon:unscoped"]],
+    );
+});
+
+test("custom namespace command metadata can mark module commands as keyless", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: new Error("NOPERM"),
+    });
+
+    attachNamespace(client, "klingon", {
+        namespaceCommands: {
+            "MODULE.INFO": { keyless: true },
+        },
+    });
+
+    await client.sendCommand(["MODULE.INFO", "status"]);
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["MODULE.INFO", "status"]);
+});
+
+test("custom namespace command metadata rejects unsafe specs", () => {
+    const { client } = createFakeClient();
+
+    assert.throws(
+        () =>
+            attachNamespace(client, "klingon", {
+                namespaceCommands: {
+                    MODULEKEY: { firstKey: 0, lastKey: 1 },
+                },
+            }),
+        {
+            name: "TypeError",
+            message:
+                "Redis namespace command MODULEKEY metadata must define integer firstKey, lastKey, and step positions",
+        },
+    );
+});
+
 test("ready refreshes command specs after an earlier introspection failure", async () => {
     let introspectionAllowed = false;
     const { client, calls, listeners } = createFakeClient({
