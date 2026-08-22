@@ -12,6 +12,7 @@ import {
     parseCommandSpecs,
     RAW_ONLY_COMMANDS,
 } from "./namespace-keys.js";
+import { attachMultiInterception } from "./namespace-multi.js";
 
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 const COMMAND_SPEC_LOAD_TIMEOUT_MS = 5_000;
@@ -316,24 +317,10 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         fallbackInternalClient && !usesPublicSendCommand
             ? fallbackInternalClient.sendCommand.bind(fallbackInternalClient)
             : rawClientSendCommand;
-    const rawExecuteMulti =
-        typeof client._executeMulti === "function" ? client._executeMulti.bind(client) : null;
-    const rawExecutePipeline =
-        typeof client._executePipeline === "function" ? client._executePipeline.bind(client) : null;
     const requiresPrivateQueueInterception = Boolean(
         fallbackInternalClient &&
         (typeof client.MULTI === "function" || typeof client.multi === "function"),
     );
-    if (requiresPrivateQueueInterception && (!rawExecuteMulti || !rawExecutePipeline)) {
-        throw namespaceCompatibilityError(
-            "node-redis v6 MULTI/pipeline executors _executeMulti and _executePipeline are required.",
-        );
-    }
-    if (Boolean(rawExecuteMulti) !== Boolean(rawExecutePipeline)) {
-        throw namespaceCompatibilityError(
-            "node-redis must expose both _executeMulti and _executePipeline, or neither.",
-        );
-    }
     const customCommandSpecs = new Map();
     const customKeylessCommands = new Set();
     let serverCommandSpecs = new Map();
@@ -346,9 +333,6 @@ export function attachNamespace(client, initialNamespace, options = {}) {
     let namespacePrefixBuffer = namespacePrefix ? Buffer.from(namespacePrefix) : null;
     const scopedClientCache = new Map();
     const namespaceProcessedCommands = new WeakSet();
-    const wrappedMultiClients = new WeakSet();
-    const originalMULTI = typeof client.MULTI === "function" ? client.MULTI.bind(client) : null;
-    const originalMulti = typeof client.multi === "function" ? client.multi.bind(client) : null;
 
     function normalizeNamespaceCommandSpec(commandName, spec) {
         const command = commandNameToken(
@@ -624,174 +608,19 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         return rawSender(namespacedArgs(args, activePrefix, activePrefixBuffer), options);
     }
 
-    function rewriteMultiCommandArguments(parameters, activePrefix, activePrefixBuffer) {
-        if (!activePrefix || !Array.isArray(parameters) || parameters.length === 0) {
-            return parameters;
-        }
-
-        const commandArgsIndex = parameters.findIndex((value) => Array.isArray(value));
-        if (commandArgsIndex === -1) {
-            return parameters;
-        }
-
-        const rewrittenCommandArgs = namespacedArgs(
-            parameters[commandArgsIndex],
-            activePrefix,
-            activePrefixBuffer,
-        );
-        if (rewrittenCommandArgs === parameters[commandArgsIndex]) {
-            return parameters;
-        }
-
-        namespaceProcessedCommands.add(rewrittenCommandArgs);
-
-        const rewrittenParameters = [...parameters];
-        rewrittenParameters[commandArgsIndex] = rewrittenCommandArgs;
-        return rewrittenParameters;
-    }
-
-    function copyRewrittenCommandArgs(commandArgs, rewrittenCommandArgs) {
-        if (rewrittenCommandArgs === commandArgs) {
-            return;
-        }
-
-        commandArgs.length = rewrittenCommandArgs.length;
-        for (let index = 0; index < rewrittenCommandArgs.length; index += 1) {
-            commandArgs[index] = rewrittenCommandArgs[index];
-        }
-        for (const key of Object.keys(rewrittenCommandArgs)) {
-            commandArgs[key] = rewrittenCommandArgs[key];
-        }
-    }
-
-    function createPendingMultiCommandHooks(rawAddCommand, multiClient, invocationContext) {
-        const pendingRewrites = [];
-        let flushPendingRewritesPromise = null;
-
-        function addCommand(...parameters) {
-            return runWithNamespaceInvocationContext(invocationContext, () => {
-                const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
-                    activePrefixForInvocationContext(invocationContext);
-                const commandArgsIndex = parameters.findIndex((value) => Array.isArray(value));
-
-                if (!activePrefix || commandArgsIndex === -1) {
-                    rawAddCommand(...parameters);
-                    return multiClient;
-                }
-
-                if (!client.isOpen || commandSpecsLoaded) {
-                    const rewrittenParameters = rewriteMultiCommandArguments(
-                        parameters,
-                        activePrefix,
-                        activePrefixBuffer,
-                    );
-                    rawAddCommand(...rewrittenParameters);
-                    return multiClient;
-                }
-
-                // Queue a defensive copy so the deferred rewrite mutates only the
-                // queued arguments, never the caller's array.
-                const commandArgs = parameters[commandArgsIndex];
-                const queuedCommandArgs = Object.assign([...commandArgs], commandArgs);
-                const queuedParameters = [...parameters];
-                queuedParameters[commandArgsIndex] = queuedCommandArgs;
-                pendingRewrites.push({
-                    args: queuedCommandArgs,
-                    prefix: activePrefix,
-                    prefixBuffer: activePrefixBuffer,
-                });
-                rawAddCommand(...queuedParameters);
-                return multiClient;
-            });
-        }
-
-        async function flushPendingRewrites() {
-            if (flushPendingRewritesPromise) {
-                return flushPendingRewritesPromise;
-            }
-            if (pendingRewrites.length === 0) {
-                return undefined;
-            }
-
-            flushPendingRewritesPromise = (async () => {
-                const rewrites = pendingRewrites.slice();
-                if (client.isOpen && !commandSpecsLoaded) {
-                    await loadCommandSpecs();
-                }
-
-                for (const { args, prefix, prefixBuffer } of rewrites) {
-                    const rewrittenArgs = namespacedArgs(args, prefix, prefixBuffer);
-                    copyRewrittenCommandArgs(args, rewrittenArgs);
-                    namespaceProcessedCommands.add(args);
-                }
-                pendingRewrites.splice(0, rewrites.length);
-            })();
-
-            try {
-                return await flushPendingRewritesPromise;
-            } finally {
-                flushPendingRewritesPromise = null;
-            }
-        }
-
-        return { addCommand, flushPendingRewrites };
-    }
-
-    async function rewritePrivateCommandQueue(commands, invocationContext) {
-        if (!Array.isArray(commands)) {
-            throw namespaceCompatibilityError(
-                "node-redis MULTI/pipeline command queue is not an array.",
-            );
-        }
-
-        const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
-            activePrefixForInvocationContext(invocationContext);
-        if (!activePrefix) {
-            return;
-        }
-
-        if (client.isOpen && !commandSpecsLoaded) {
-            await loadCommandSpecs();
-        }
-
-        for (const command of commands) {
-            if (
-                !command ||
-                typeof command !== "object" ||
-                !Array.isArray(command.args) ||
-                command.args.length === 0
-            ) {
-                throw namespaceCompatibilityError(
-                    "node-redis MULTI/pipeline command queue entry has an unsupported shape.",
-                );
-            }
-
-            if (namespaceProcessedCommands.has(command.args)) {
-                continue;
-            }
-
-            command.args = namespacedArgs(command.args, activePrefix, activePrefixBuffer);
-            namespaceProcessedCommands.add(command.args);
-        }
-    }
-
-    function createPrivateQueueExecutor(rawExecutor) {
-        return async (commands, ...executorArgs) => {
-            const invocationContext = captureNamespaceInvocationContext();
-            if (!invocationContext.bypass) {
-                await rewritePrivateCommandQueue(commands, invocationContext);
-            }
-            return rawExecutor(commands, ...executorArgs);
-        };
-    }
-
-    const usesPrivateQueueInterception = Boolean(rawExecuteMulti || rawExecutePipeline);
-    if (rawExecuteMulti) {
-        client._executeMulti = createPrivateQueueExecutor(rawExecuteMulti);
-    }
-    if (rawExecutePipeline) {
-        client._executePipeline = createPrivateQueueExecutor(rawExecutePipeline);
-    }
+    attachMultiInterception({
+        client,
+        requiresPrivateQueueInterception,
+        captureInvocationContext: captureNamespaceInvocationContext,
+        runWithInvocationContext: runWithNamespaceInvocationContext,
+        activePrefixForInvocationContext,
+        areCommandSpecsLoaded: () => commandSpecsLoaded,
+        loadCommandSpecs,
+        namespacedArgs,
+        namespaceProcessedCommands,
+        withoutNamespace,
+        namespaceCompatibilityError,
+    });
 
     function guardPrivateQueueMethods() {
         for (const [methodName, command] of PRIVATE_QUEUE_METHOD_COMMANDS) {
@@ -816,66 +645,6 @@ export function attachNamespace(client, initialNamespace, options = {}) {
     }
 
     guardPrivateQueueMethods();
-
-    function wrapMultiClient(multiClient, invocationContext) {
-        if (!multiClient || typeof multiClient !== "object") {
-            return multiClient;
-        }
-        if (wrappedMultiClients.has(multiClient)) {
-            return multiClient;
-        }
-
-        if (typeof multiClient.addCommand !== "function") {
-            return multiClient;
-        }
-        wrappedMultiClients.add(multiClient);
-
-        const rawAddCommand = multiClient.addCommand.bind(multiClient);
-        const { addCommand, flushPendingRewrites } = createPendingMultiCommandHooks(
-            rawAddCommand,
-            multiClient,
-            invocationContext,
-        );
-        multiClient.addCommand = addCommand;
-
-        if (typeof multiClient.sendCommand === "function") {
-            multiClient.sendCommand = (args, ...rest) =>
-                multiClient.addCommand(Array.isArray(args) ? args.slice() : args, ...rest);
-        }
-
-        for (const methodName of [
-            "exec",
-            "EXEC",
-            "execTyped",
-            "execAsPipeline",
-            "execAsPipelineTyped",
-        ]) {
-            if (typeof multiClient[methodName] !== "function") {
-                continue;
-            }
-
-            const rawMethod = multiClient[methodName].bind(multiClient);
-            multiClient[methodName] = async (...methodArgs) =>
-                runWithNamespaceInvocationContext(invocationContext, async () => {
-                    await flushPendingRewrites();
-                    return usesPrivateQueueInterception
-                        ? rawMethod(...methodArgs)
-                        : withoutNamespace(() => rawMethod(...methodArgs));
-                });
-        }
-
-        return multiClient;
-    }
-
-    function createNamespacedMultiFactory(rawFactory) {
-        return (...factoryArgs) => {
-            const invocationContext = captureNamespaceInvocationContext();
-            const multiClient = runWithNamespaceInvocationContext(invocationContext, () =>
-                rawFactory(...factoryArgs),
-            );
-            return wrapMultiClient(multiClient, invocationContext);
-        };
-    }
 
     function withNamespace(nextNamespace) {
         const normalizedNamespace = normalizeNamespace(nextNamespace);
@@ -925,14 +694,6 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         fallbackInternalClient.sendCommand = function (args, options) {
             return namespacedSendCommand(rawInternalSendCommand, args, options);
         };
-    }
-
-    if (originalMULTI) {
-        client.MULTI = createNamespacedMultiFactory(originalMULTI);
-    }
-
-    if (originalMulti) {
-        client.multi = createNamespacedMultiFactory(originalMulti);
     }
 
     if (typeof client.on === "function") {
