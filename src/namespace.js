@@ -590,12 +590,18 @@ export function attachNamespace(client, initialNamespace, options = {}) {
                     return multiClient;
                 }
 
+                // Queue a defensive copy so the deferred rewrite mutates only the
+                // queued arguments, never the caller's array.
+                const commandArgs = parameters[commandArgsIndex];
+                const queuedCommandArgs = Object.assign([...commandArgs], commandArgs);
+                const queuedParameters = [...parameters];
+                queuedParameters[commandArgsIndex] = queuedCommandArgs;
                 pendingRewrites.push({
-                    args: parameters[commandArgsIndex],
+                    args: queuedCommandArgs,
                     prefix: activePrefix,
                     prefixBuffer: activePrefixBuffer,
                 });
-                rawAddCommand(...parameters);
+                rawAddCommand(...queuedParameters);
                 return multiClient;
             });
         }

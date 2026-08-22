@@ -553,6 +553,31 @@ test("multi waits for command specs before rewriting server-discovered commands"
     assert.deepEqual(calls[1].args, ["CUSTOMKEY", "alpha:new"]);
 });
 
+test("multi addCommand does not mutate the caller's argument array on deferred rewrites", async () => {
+    const { client, calls } = createPublicMultiOnlyFakeClient({
+        commandResponse: [["set", -3, ["write"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+
+    const callerArgs = ["SET", "planet", "mars"];
+    transaction.addCommand(callerArgs);
+    await transaction.exec();
+
+    assert.deepEqual(callerArgs, ["SET", "planet", "mars"]);
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["SET", "alpha:planet", "mars"]);
+
+    // Re-adding the same caller array must not double-prefix.
+    const retryTransaction = client.withNamespace("alpha").multi();
+    retryTransaction.addCommand(callerArgs);
+    await retryTransaction.exec();
+
+    assert.deepEqual(callerArgs, ["SET", "planet", "mars"]);
+    assert.deepEqual(calls[2].args, ["SET", "alpha:planet", "mars"]);
+});
+
 test("multi sendCommand uses the captured namespace context", async () => {
     const { client, calls } = createPublicMultiOnlyFakeClient({
         commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
