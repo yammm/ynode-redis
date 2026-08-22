@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { createClient, defineScript } from "redis";
+
 import { attachNamespace } from "../src/namespace.js";
+
+const GET_BY_KEY_SCRIPT = defineScript({
+    SCRIPT: 'return redis.call("GET", KEYS[1])',
+    NUMBER_OF_KEYS: 1,
+    parseCommand(parser, key) {
+        parser.pushKey(key);
+    },
+});
 
 function createFakeClient({ commandResponse, isOpen = true } = {}) {
     const listeners = new Map();
@@ -860,7 +870,7 @@ test("movable-key commands prefix every resolved key position", async () => {
     ]);
 });
 
-test("database-wide destructive commands fail closed on namespaced clients", async () => {
+test("database-wide destructive commands require raw clients", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [
             ["flushdb", -1, ["write"], 0, 0, 0],
@@ -877,14 +887,14 @@ test("database-wide destructive commands fail closed on namespaced clients", asy
             async () => client.sendCommand(args),
             (error) => {
                 assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
-                return /operates on the entire database/.test(error.message);
+                return /requires client\.raw/.test(error.message);
             },
         );
         await assert.rejects(
             async () => scoped.sendCommand(args),
             (error) => {
                 assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
-                return /operates on the entire database/.test(error.message);
+                return /requires client\.raw/.test(error.message);
             },
         );
     }
@@ -895,6 +905,102 @@ test("database-wide destructive commands fail closed on namespaced clients", asy
         calls.map(({ args }) => args),
         [["COMMAND"], ["FLUSHDB"]],
     );
+});
+
+test("control-plane commands and server-discovered admin commands require raw clients", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["future-admin", -1, ["admin"], 0, 0, 0]],
+    });
+    attachNamespace(client, "alpha");
+
+    for (const args of [
+        ["ACL", "LIST"],
+        ["CONFIG", "GET", "maxmemory"],
+        ["FUNCTION", "LIST"],
+        ["MODULE", "LIST"],
+        ["MONITOR"],
+        ["PUBLISH", "events", "message"],
+        ["RESET"],
+        ["SCRIPT", "EXISTS", "sha1"],
+        ["SELECT", "1"],
+        ["SUBSCRIBE", "events"],
+        ["FUTURE-ADMIN"],
+    ]) {
+        await assert.rejects(
+            async () => client.sendCommand(args),
+            (error) => {
+                assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+                return /requires client\.raw/.test(error.message);
+            },
+        );
+    }
+
+    await client.raw.sendCommand(["CONFIG", "GET", "maxmemory"]);
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"], ["CONFIG", "GET", "maxmemory"]],
+    );
+});
+
+test("installed node-redis v6 rewrites custom scripts in MULTI and pipelines", async () => {
+    const client = createClient({ scripts: { getByKey: GET_BY_KEY_SCRIPT } });
+    const batches = [];
+    client._executeMulti = async (commands) => {
+        batches.push(commands.map(({ args }) => [...args]));
+        return commands.map(() => null);
+    };
+    client._executePipeline = async (commands) => {
+        batches.push(commands.map(({ args }) => [...args]));
+        return commands.map(() => null);
+    };
+
+    attachNamespace(client, "global");
+    const scoped = client.withNamespace("alpha");
+
+    await scoped.multi().getByKey("transaction-key").exec();
+    await scoped.multi().getByKey("pipeline-key").execAsPipeline();
+    await scoped.raw.multi().getByKey("raw-key").exec();
+
+    assert.deepEqual(batches, [
+        [["EVAL", GET_BY_KEY_SCRIPT.SCRIPT, "1", "alpha:transaction-key"]],
+        [["EVAL", GET_BY_KEY_SCRIPT.SCRIPT, "1", "alpha:pipeline-key"]],
+        [["EVAL", GET_BY_KEY_SCRIPT.SCRIPT, "1", "raw-key"]],
+    ]);
+});
+
+test("installed node-redis v6 blocks private connection queues and invalid queue shapes", async () => {
+    const client = createClient();
+    client._self.sendCommand = async () => "OK";
+    client._executeMulti = async (commands) => commands.map(() => null);
+    client._executePipeline = async (commands) => commands.map(() => null);
+    attachNamespace(client, "global");
+    const scoped = client.withNamespace("alpha");
+
+    for (const invoke of [
+        () => scoped.monitor(() => {}),
+        () => scoped.reset(),
+        () => scoped.subscribe("events", () => {}),
+        () => scoped.pSubscribe("events:*", () => {}),
+        () => scoped.sSubscribe("events", () => {}),
+        () => scoped.configSet("maxmemory", "1mb"),
+    ]) {
+        await assert.rejects(
+            async () => invoke(),
+            (error) => {
+                assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+                return /requires client\.raw/.test(error.message);
+            },
+        );
+    }
+
+    await assert.rejects(scoped.multi().select(1).exec(), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+        return /SELECT.*requires client\.raw/.test(error.message);
+    });
+    await assert.rejects(scoped._executeMulti([{ redisArgs: ["GET", "key"] }]), (error) => {
+        assert.equal(error.code, "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT");
+        return /unsupported shape/.test(error.message);
+    });
 });
 
 test("xread option tokens are skipped without consuming stream keys", async () => {

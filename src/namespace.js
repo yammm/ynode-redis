@@ -6,17 +6,37 @@ import {
     commandNameToken,
     DEFAULT_COMMAND_SPECS,
     DEFAULT_KEYLESS_COMMANDS,
-    DESTRUCTIVE_DATABASE_COMMANDS,
     keyIndexesForCommand,
     keyIndexesForDynamicCountCommand,
     keyIndexesForMovableCommand,
     parseCommandSpecs,
+    RAW_ONLY_COMMANDS,
 } from "./namespace-keys.js";
 
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 const COMMAND_SPEC_LOAD_TIMEOUT_MS = 5_000;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
 const NAMESPACE_UNSAFE_COMMAND_ERROR_CODE = "REDIS_NAMESPACE_UNSAFE_COMMAND";
+
+const PRIVATE_QUEUE_METHOD_COMMANDS = new Map([
+    ["MONITOR", "MONITOR"],
+    ["monitor", "MONITOR"],
+    ["PSUBSCRIBE", "PSUBSCRIBE"],
+    ["pSubscribe", "PSUBSCRIBE"],
+    ["PUNSUBSCRIBE", "PUNSUBSCRIBE"],
+    ["pUnsubscribe", "PUNSUBSCRIBE"],
+    ["reset", "RESET"],
+    ["SELECT", "SELECT"],
+    ["select", "SELECT"],
+    ["SSUBSCRIBE", "SSUBSCRIBE"],
+    ["sSubscribe", "SSUBSCRIBE"],
+    ["SUNSUBSCRIBE", "SUNSUBSCRIBE"],
+    ["sUnsubscribe", "SUNSUBSCRIBE"],
+    ["SUBSCRIBE", "SUBSCRIBE"],
+    ["subscribe", "SUBSCRIBE"],
+    ["UNSUBSCRIBE", "UNSUBSCRIBE"],
+    ["unsubscribe", "UNSUBSCRIBE"],
+]);
 
 const NAMESPACE_GLOB_METACHARACTERS = /[*?[\]]/;
 
@@ -281,7 +301,7 @@ function createRawClientProxy(client, runWithoutNamespace) {
  * Intercepts sendCommand to prepend the active namespace prefix to key arguments,
  * supports scoped namespaces via withNamespace(), raw bypass via withoutNamespace(),
  * and MULTI/pipeline command rewriting.
- * @param {object} client - Redis client instance (node-redis v5).
+ * @param {object} client - Redis client instance (node-redis v6).
  * @param {string} [initialNamespace] - Default namespace prefix for all key commands.
  * @param {object} [options] - Namespace interception options.
  * @param {object|Map} [options.namespaceCommands] - Custom command key metadata.
@@ -296,6 +316,15 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         fallbackInternalClient && !usesPublicSendCommand
             ? fallbackInternalClient.sendCommand.bind(fallbackInternalClient)
             : rawClientSendCommand;
+    const rawExecuteMulti =
+        typeof client._executeMulti === "function" ? client._executeMulti.bind(client) : null;
+    const rawExecutePipeline =
+        typeof client._executePipeline === "function" ? client._executePipeline.bind(client) : null;
+    if (Boolean(rawExecuteMulti) !== Boolean(rawExecutePipeline)) {
+        throw namespaceCompatibilityError(
+            "node-redis must expose both _executeMulti and _executePipeline, or neither.",
+        );
+    }
     const customCommandSpecs = new Map();
     const customKeylessCommands = new Set();
     let serverCommandSpecs = new Map();
@@ -307,6 +336,7 @@ export function attachNamespace(client, initialNamespace, options = {}) {
     let namespacePrefix = namespace ? `${namespace}:` : "";
     let namespacePrefixBuffer = namespacePrefix ? Buffer.from(namespacePrefix) : null;
     const scopedClientCache = new Map();
+    const namespaceProcessedCommands = new WeakSet();
     const wrappedMultiClients = new WeakSet();
     const originalMULTI = typeof client.MULTI === "function" ? client.MULTI.bind(client) : null;
     const originalMulti = typeof client.multi === "function" ? client.multi.bind(client) : null;
@@ -509,19 +539,28 @@ export function attachNamespace(client, initialNamespace, options = {}) {
             return args;
         }
 
-        const command = commandNameToken(args[0]);
-        if (!command) {
+        // A node-redis MULTI executor can send an already-rewritten array
+        // through a public sender in test doubles or alternate transports.
+        // Preserve the exactly-once key transformation in that case.
+        if (namespaceProcessedCommands.has(args)) {
             return args;
         }
 
-        if (DESTRUCTIVE_DATABASE_COMMANDS.has(command)) {
-            throw namespaceUnsafeCommandError(command, "operates on the entire database");
+        const command = commandNameToken(args[0]);
+        if (!command) {
+            return args;
         }
 
         const dynamicKeyIndexes = keyIndexesForDynamicCountCommand(command, args);
         const movableKeyIndexes =
             dynamicKeyIndexes === null ? keyIndexesForMovableCommand(command, args) : null;
         const spec = commandSpecs.get(command);
+        if (RAW_ONLY_COMMANDS.has(command) || spec?.admin) {
+            throw namespaceUnsafeCommandError(
+                command,
+                "requires client.raw because it changes server-wide or connection state",
+            );
+        }
         if (dynamicKeyIndexes === null && movableKeyIndexes === null && spec?.movableKeys) {
             throw namespaceUnsafeCommandError(command);
         }
@@ -594,6 +633,8 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         if (rewrittenCommandArgs === parameters[commandArgsIndex]) {
             return parameters;
         }
+
+        namespaceProcessedCommands.add(rewrittenCommandArgs);
 
         const rewrittenParameters = [...parameters];
         rewrittenParameters[commandArgsIndex] = rewrittenCommandArgs;
@@ -672,6 +713,7 @@ export function attachNamespace(client, initialNamespace, options = {}) {
                 for (const { args, prefix, prefixBuffer } of rewrites) {
                     const rewrittenArgs = namespacedArgs(args, prefix, prefixBuffer);
                     copyRewrittenCommandArgs(args, rewrittenArgs);
+                    namespaceProcessedCommands.add(args);
                 }
                 pendingRewrites.splice(0, rewrites.length);
             })();
@@ -685,6 +727,86 @@ export function attachNamespace(client, initialNamespace, options = {}) {
 
         return { addCommand, flushPendingRewrites };
     }
+
+    async function rewritePrivateCommandQueue(commands, invocationContext) {
+        if (!Array.isArray(commands)) {
+            throw namespaceCompatibilityError(
+                "node-redis MULTI/pipeline command queue is not an array.",
+            );
+        }
+
+        const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
+            activePrefixForInvocationContext(invocationContext);
+        if (!activePrefix) {
+            return;
+        }
+
+        if (client.isOpen && !commandSpecsLoaded) {
+            await loadCommandSpecs();
+        }
+
+        for (const command of commands) {
+            if (
+                !command ||
+                typeof command !== "object" ||
+                !Array.isArray(command.args) ||
+                command.args.length === 0
+            ) {
+                throw namespaceCompatibilityError(
+                    "node-redis MULTI/pipeline command queue entry has an unsupported shape.",
+                );
+            }
+
+            if (namespaceProcessedCommands.has(command.args)) {
+                continue;
+            }
+
+            command.args = namespacedArgs(command.args, activePrefix, activePrefixBuffer);
+            namespaceProcessedCommands.add(command.args);
+        }
+    }
+
+    function createPrivateQueueExecutor(rawExecutor) {
+        return async (commands, ...executorArgs) => {
+            const invocationContext = captureNamespaceInvocationContext();
+            if (!invocationContext.bypass) {
+                await rewritePrivateCommandQueue(commands, invocationContext);
+            }
+            return rawExecutor(commands, ...executorArgs);
+        };
+    }
+
+    const usesPrivateQueueInterception = Boolean(rawExecuteMulti || rawExecutePipeline);
+    if (rawExecuteMulti) {
+        client._executeMulti = createPrivateQueueExecutor(rawExecuteMulti);
+    }
+    if (rawExecutePipeline) {
+        client._executePipeline = createPrivateQueueExecutor(rawExecutePipeline);
+    }
+
+    function guardPrivateQueueMethods() {
+        for (const [methodName, command] of PRIVATE_QUEUE_METHOD_COMMANDS) {
+            if (typeof client[methodName] !== "function") {
+                continue;
+            }
+
+            const rawMethod = client[methodName].bind(client);
+            client[methodName] = (...methodArgs) => {
+                const invocationContext = captureNamespaceInvocationContext();
+                const { prefix: activePrefix } =
+                    activePrefixForInvocationContext(invocationContext);
+                if (!invocationContext.bypass && activePrefix) {
+                    throw namespaceUnsafeCommandError(
+                        command,
+                        "requires client.raw because it changes connection or pub/sub state",
+                    );
+                }
+                return rawMethod(...methodArgs);
+            };
+        }
+    }
+
+    guardPrivateQueueMethods();
 
     function wrapMultiClient(multiClient, invocationContext) {
         if (!multiClient || typeof multiClient !== "object") {
@@ -727,7 +849,9 @@ export function attachNamespace(client, initialNamespace, options = {}) {
             multiClient[methodName] = async (...methodArgs) =>
                 runWithNamespaceInvocationContext(invocationContext, async () => {
                     await flushPendingRewrites();
-                    return withoutNamespace(() => rawMethod(...methodArgs));
+                    return usesPrivateQueueInterception
+                        ? rawMethod(...methodArgs)
+                        : withoutNamespace(() => rawMethod(...methodArgs));
                 });
         }
 

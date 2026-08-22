@@ -4,6 +4,7 @@ import net from "node:net";
 import { test } from "node:test";
 
 import Fastify from "fastify";
+import { defineScript } from "redis";
 
 import redisPlugin from "../src/plugin.js";
 
@@ -207,7 +208,19 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     });
 
     const { fastify, hooks } = createFastifyHarness();
-    await redisPlugin(fastify, { url: redis.url, name: "ynode-redis-integration-test" });
+    await redisPlugin(fastify, {
+        url: redis.url,
+        name: "ynode-redis-integration-test",
+        scripts: {
+            getByKey: defineScript({
+                SCRIPT: 'return redis.call("GET", KEYS[1])',
+                NUMBER_OF_KEYS: 1,
+                parseCommand(parser, scriptKey) {
+                    parser.pushKey(scriptKey);
+                },
+            }),
+        },
+    });
 
     const onReady = hooks.get("onReady");
     const onClose = hooks.get("onClose");
@@ -287,6 +300,14 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     assert.equal(await fastify.redis.raw.get(`alpha:${multiKey}`), "tx-a");
     assert.equal(await fastify.redis.raw.get(`beta:${multiKey}`), "tx-b");
 
+    const scriptTransaction = tenantA.multi();
+    scriptTransaction.getByKey(logicalSharedKey);
+    assert.deepEqual(await scriptTransaction.exec(), ["a"]);
+
+    const scriptPipeline = tenantB.multi();
+    scriptPipeline.getByKey(logicalSharedKey);
+    assert.deepEqual(await scriptPipeline.execAsPipeline(), ["b"]);
+
     const pipelineKey = `${key}:pipeline`;
     const pipelineA = tenantA.multi();
     pipelineA.set(pipelineKey, "pipe-a").get(pipelineKey);
@@ -309,6 +330,22 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     assert.equal(await tenantA.get(rawMultiKey), null);
     assert.equal(await tenantB.get(rawMultiKey), null);
     assert.equal(fastify.redis.namespace, undefined);
+
+    for (const invoke of [
+        () => tenantA.select(1),
+        () => tenantA.reset(),
+        () => tenantA.monitor(() => {}),
+        () => tenantA.subscribe("events", () => {}),
+        () => tenantA.configGet("maxmemory"),
+    ]) {
+        await assert.rejects(
+            async () => invoke(),
+            (error) => {
+                assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+                return /requires client\.raw/.test(error.message);
+            },
+        );
+    }
 
     fastify.redis.namespace = "codex:";
     assert.equal(fastify.redis.namespace, "codex");

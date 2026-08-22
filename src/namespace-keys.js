@@ -148,7 +148,56 @@ const DEFAULT_COMMAND_SPECS = new Map([
     ["ZSCORE", { firstKey: 1, lastKey: 1, step: 1 }],
 ]);
 
-const DESTRUCTIVE_DATABASE_COMMANDS = new Set(["FLUSHALL", "FLUSHDB", "SWAPDB"]);
+// Commands that cannot provide namespace-local semantics because they mutate
+// server-wide state, alter the connection session, or address global pub/sub
+// channels. They remain available deliberately through client.raw.
+const RAW_ONLY_COMMANDS = new Set([
+    "ACL",
+    "ASKING",
+    "AUTH",
+    "BGREWRITEAOF",
+    "BGSAVE",
+    "CLIENT",
+    "CLUSTER",
+    "COMMAND",
+    "CONFIG",
+    "DEBUG",
+    "DISCARD",
+    "EXEC",
+    "FAILOVER",
+    "FLUSHALL",
+    "FLUSHDB",
+    "FUNCTION",
+    "HELLO",
+    "HOTKEYS",
+    "LATENCY",
+    "MODULE",
+    "MONITOR",
+    "MULTI",
+    "PSUBSCRIBE",
+    "PSYNC",
+    "PUBLISH",
+    "PUBSUB",
+    "PUNSUBSCRIBE",
+    "QUIT",
+    "READONLY",
+    "READWRITE",
+    "REPLICAOF",
+    "RESET",
+    "SAVE",
+    "SCRIPT",
+    "SELECT",
+    "SHUTDOWN",
+    "SLAVEOF",
+    "SLOWLOG",
+    "SPUBLISH",
+    "SSUBSCRIBE",
+    "SUBSCRIBE",
+    "SUNSUBSCRIBE",
+    "SWAPDB",
+    "SYNC",
+    "UNSUBSCRIBE",
+]);
 const DYNAMIC_KEY_COUNT_COMMANDS = new Set([
     "EVAL",
     "EVAL_RO",
@@ -269,6 +318,7 @@ function parseCommandSpecs(reply) {
             firstKey,
             lastKey,
             step,
+            admin: flags.includes("ADMIN"),
             movableKeys: flags.includes("MOVABLEKEYS"),
         });
     }
@@ -606,9 +656,9 @@ export {
     commandNameToken,
     DEFAULT_COMMAND_SPECS,
     DEFAULT_KEYLESS_COMMANDS,
-    DESTRUCTIVE_DATABASE_COMMANDS,
     keyIndexesForCommand,
     keyIndexesForDynamicCountCommand,
     keyIndexesForMovableCommand,
     parseCommandSpecs,
+    RAW_ONLY_COMMANDS,
 };
