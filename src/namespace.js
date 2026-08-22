@@ -659,8 +659,8 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         multiClient.addCommand = addCommand;
 
         if (typeof multiClient.sendCommand === "function") {
-            multiClient.sendCommand = (args) =>
-                multiClient.addCommand(Array.isArray(args) ? args.slice() : args);
+            multiClient.sendCommand = (args, ...rest) =>
+                multiClient.addCommand(Array.isArray(args) ? args.slice() : args, ...rest);
         }
 
         for (const methodName of [

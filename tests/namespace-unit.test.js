@@ -593,6 +593,28 @@ test("multi sendCommand uses the captured namespace context", async () => {
     assert.deepEqual(calls[1].args, ["GET", "alpha:planet"]);
 });
 
+test("multi sendCommand forwards additional parameters to addCommand", async () => {
+    const { client } = createPublicMultiOnlyFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+    const addCommandParameters = [];
+    const transformReply = (reply) => reply;
+
+    attachNamespace(client, "global");
+    const transaction = client.withNamespace("alpha").multi();
+    const rawAddCommand = transaction.addCommand.bind(transaction);
+    transaction.addCommand = (...parameters) => {
+        addCommandParameters.push(parameters);
+        return rawAddCommand(...parameters);
+    };
+
+    transaction.sendCommand(["GET", "planet"], transformReply);
+
+    assert.equal(addCommandParameters.length, 1);
+    assert.deepEqual(addCommandParameters[0][0], ["GET", "planet"]);
+    assert.equal(addCommandParameters[0][1], transformReply);
+});
+
 test("multi preserves queue order while waiting for command specs", async () => {
     const { client, calls } = createPublicMultiOnlyFakeClient({
         commandResponse: [
