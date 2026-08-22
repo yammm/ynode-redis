@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { raceWithDeadline } from "./deadline.js";
 import {
     applyPrefixToKey,
     commandNameToken,
@@ -13,6 +14,7 @@ import {
 } from "./namespace-keys.js";
 
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
+const COMMAND_SPEC_LOAD_TIMEOUT_MS = 5_000;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
 const NAMESPACE_UNSAFE_COMMAND_ERROR_CODE = "REDIS_NAMESPACE_UNSAFE_COMMAND";
 
@@ -441,7 +443,16 @@ export function attachNamespace(client, initialNamespace, options = {}) {
 
         const currentLoadingPromise = (async () => {
             try {
-                const response = await rawInternalSendCommand(["COMMAND"]);
+                // Bound introspection so a stalled socket cannot block every
+                // namespaced command behind a never-settling spec load.
+                const response = await raceWithDeadline(
+                    rawInternalSendCommand(["COMMAND"]),
+                    COMMAND_SPEC_LOAD_TIMEOUT_MS,
+                    () =>
+                        new Error(
+                            `Redis COMMAND introspection timed out after ${COMMAND_SPEC_LOAD_TIMEOUT_MS}ms`,
+                        ),
+                );
                 const discoveredSpecs = parseCommandSpecs(response);
                 if (discoveredSpecs.size > 0) {
                     serverCommandSpecs = discoveredSpecs;

@@ -965,6 +965,24 @@ test("fallback specs cover common string, blocking, probabilistic, and stream co
     assert.deepEqual(calls[8].args, ["MOVE", "klingon:relocated", "2"]);
 });
 
+test("stalled COMMAND introspection falls back to built-in specs after the deadline", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { client, calls } = createFakeClient({
+        commandResponse: () => new Promise(() => {}),
+    });
+
+    attachNamespace(client, "klingon");
+
+    const pending = client.sendCommand(["GET", "key"]);
+    t.mock.timers.tick(5001);
+    await pending;
+
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"], ["GET", "klingon:key"]],
+    );
+});
+
 test("unknown commands fail closed when introspection is unavailable", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: new Error("NOPERM"),

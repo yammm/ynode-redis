@@ -62,6 +62,45 @@ test("attachHealth returns a non-throwing unhealthy payload on ping errors", asy
     assert.equal(health.error?.code, "ECONNRESET");
 });
 
+test("attachHealth healthcheck resolves unhealthy when the ping stalls past the deadline", async () => {
+    const client = {
+        isOpen: true,
+        isReady: true,
+        namespace: "codex",
+        sendCommand() {
+            // Stalled socket: the ping settles long after the deadline. The
+            // ref'd timer also keeps the event loop alive so the unref'd
+            // deadline timer can fire in this test.
+            return new Promise((resolve) => setTimeout(() => resolve("PONG"), 500));
+        },
+    };
+
+    attachHealth(client);
+
+    const health = await client.healthcheck({ timeoutMs: 25 });
+    assert.equal(health.ok, false);
+    assert.equal(health.isOpen, true);
+    assert.equal(health.namespace, "codex");
+    assert.equal(typeof health.latencyMs, "number");
+    assert.equal(health.error?.code, "REDIS_HEALTHCHECK_TIMEOUT");
+    assert.match(health.error?.message ?? "", /timed out after 25ms/);
+});
+
+test("attachHealth healthcheck ignores invalid timeout overrides", async () => {
+    const client = {
+        isOpen: true,
+        isReady: true,
+        async sendCommand() {
+            return "PONG";
+        },
+    };
+
+    attachHealth(client);
+
+    const health = await client.healthcheck({ timeoutMs: Number.NaN });
+    assert.equal(health.ok, true);
+});
+
 test("attachHealth accepts Buffer PONG responses from type-mapped clients", async () => {
     const client = {
         isOpen: true,

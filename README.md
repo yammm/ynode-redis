@@ -166,6 +166,8 @@ This plugin exposes simple probe helpers:
 - `fastify.redis.readiness()`: lightweight state snapshot
 - `fastify.redis.healthcheck()`: ping-based health check that never throws
 
+The healthcheck ping is bounded by a deadline so a stalled connection resolves unhealthy instead of hanging the probe. The default deadline is 5000 ms; override it per call with `healthcheck({ timeoutMs })`.
+
 ```javascript
 const readiness = fastify.redis.readiness();
 // { isOpen: true, isReady: true, namespace: "codex" }

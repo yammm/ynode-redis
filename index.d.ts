@@ -44,6 +44,11 @@ export interface RedisHealthcheckResult extends RedisReadinessStatus {
     error?: RedisHealthError;
 }
 
+export interface RedisHealthcheckOptions {
+    /** Ping deadline in milliseconds. Defaults to 5000. */
+    timeoutMs?: number;
+}
+
 export interface RedisNamespaceHelpers {
     readonly raw: RedisClientType;
     withNamespace(namespace?: string): ScopedRedisClientType;
@@ -54,7 +59,7 @@ export interface RedisNamespaceHelpers {
     ): NamespacedRedisClientType;
     registerNamespaceCommands(commands: RedisNamespaceCommandMap): NamespacedRedisClientType;
     readiness(): RedisReadinessStatus;
-    healthcheck(): Promise<RedisHealthcheckResult>;
+    healthcheck(options?: RedisHealthcheckOptions): Promise<RedisHealthcheckResult>;
 }
 
 export interface NamespacedRedisClientType extends RedisClientType, RedisNamespaceHelpers {
