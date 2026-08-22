@@ -28,11 +28,11 @@ async function runBenchmark() {
     // 1. Raw Client (Base Performance)
     console.log(`\n--- RAW CLIENT (No Namespace) ---`);
     const t0 = performance.now();
-    for (let i = 0; i < ITERATIONS; i++) {
+    for (let i = 0; i < ITERATIONS; ++i) {
         await client.raw.set(`raw-key-${i}`, value);
     }
     const t1 = performance.now();
-    for (let i = 0; i < ITERATIONS; i++) {
+    for (let i = 0; i < ITERATIONS; ++i) {
         await client.raw.get(`raw-key-${i}`);
     }
     const t2 = performance.now();
@@ -50,11 +50,11 @@ async function runBenchmark() {
     const nsClient = client.withNamespace("tenant-abc");
     console.log(`\n--- NAMESPACED CLIENT ---`);
     const t3 = performance.now();
-    for (let i = 0; i < ITERATIONS; i++) {
+    for (let i = 0; i < ITERATIONS; ++i) {
         await nsClient.set(`ns-key-${i}`, value);
     }
     const t4 = performance.now();
-    for (let i = 0; i < ITERATIONS; i++) {
+    for (let i = 0; i < ITERATIONS; ++i) {
         await nsClient.get(`ns-key-${i}`);
     }
     const t5 = performance.now();
@@ -69,14 +69,12 @@ async function runBenchmark() {
     );
 
     // Cleanup and exit
-    performance.now();
     const pipeline = client.raw.multi();
-    for (let i = 0; i < ITERATIONS; i++) {
+    for (let i = 0; i < ITERATIONS; ++i) {
         pipeline.del(`raw-key-${i}`);
         pipeline.del(`tenant-abc:ns-key-${i}`);
     }
     await pipeline.execAsPipeline();
-    performance.now();
 
     console.log(`\nSummary:`);
     console.log(
