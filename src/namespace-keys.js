@@ -44,6 +44,7 @@ const DEFAULT_COMMAND_SPECS = new Map([
     ["HMSET", { firstKey: 1, lastKey: 1, step: 1 }],
     ["HSCAN", { firstKey: 1, lastKey: 1, step: 1 }],
     ["HSET", { firstKey: 1, lastKey: 1, step: 1 }],
+    ["HSETNX", { firstKey: 1, lastKey: 1, step: 1 }],
     ["HSTRLEN", { firstKey: 1, lastKey: 1, step: 1 }],
     ["HVALS", { firstKey: 1, lastKey: 1, step: 1 }],
     ["HRANDFIELD", { firstKey: 1, lastKey: 1, step: 1 }],

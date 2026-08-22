@@ -973,6 +973,7 @@ test("fallback specs cover common string, blocking, probabilistic, and stream co
     attachNamespace(client, "klingon");
 
     await client.sendCommand(["SETNX", "lock", "1"]);
+    await client.sendCommand(["HSETNX", "profile", "field", "value"]);
     await client.sendCommand(["PSETEX", "cache", "1000", "value"]);
     await client.sendCommand(["BLPOP", "primary", "backup", "0"]);
     await client.sendCommand(["PFCOUNT", "daily", "monthly"]);
@@ -982,13 +983,14 @@ test("fallback specs cover common string, blocking, probabilistic, and stream co
     await client.sendCommand(["MOVE", "relocated", "2"]);
 
     assert.deepEqual(calls[1].args, ["SETNX", "klingon:lock", "1"]);
-    assert.deepEqual(calls[2].args, ["PSETEX", "klingon:cache", "1000", "value"]);
-    assert.deepEqual(calls[3].args, ["BLPOP", "klingon:primary", "klingon:backup", "0"]);
-    assert.deepEqual(calls[4].args, ["PFCOUNT", "klingon:daily", "klingon:monthly"]);
-    assert.deepEqual(calls[5].args, ["XADD", "klingon:events", "*", "type", "created"]);
-    assert.deepEqual(calls[6].args, ["DUMP", "klingon:archive"]);
-    assert.deepEqual(calls[7].args, ["RESTORE", "klingon:restored", "0", "payload"]);
-    assert.deepEqual(calls[8].args, ["MOVE", "klingon:relocated", "2"]);
+    assert.deepEqual(calls[2].args, ["HSETNX", "klingon:profile", "field", "value"]);
+    assert.deepEqual(calls[3].args, ["PSETEX", "klingon:cache", "1000", "value"]);
+    assert.deepEqual(calls[4].args, ["BLPOP", "klingon:primary", "klingon:backup", "0"]);
+    assert.deepEqual(calls[5].args, ["PFCOUNT", "klingon:daily", "klingon:monthly"]);
+    assert.deepEqual(calls[6].args, ["XADD", "klingon:events", "*", "type", "created"]);
+    assert.deepEqual(calls[7].args, ["DUMP", "klingon:archive"]);
+    assert.deepEqual(calls[8].args, ["RESTORE", "klingon:restored", "0", "payload"]);
+    assert.deepEqual(calls[9].args, ["MOVE", "klingon:relocated", "2"]);
 });
 
 test("stalled COMMAND introspection falls back to built-in specs after the deadline", async (t) => {
