@@ -248,7 +248,13 @@ function createUnsupportedDispatchFakeClient() {
     return { client, listeners };
 }
 
-test("attachNamespace prefixes command keys and supports runtime namespace updates", async () => {
+test("attachNamespace prefixes command keys and warns once for runtime namespace updates", async (t) => {
+    const warnings = [];
+    const originalEmitWarning = process.emitWarning;
+    process.emitWarning = (...args) => warnings.push(args);
+    t.after(() => {
+        process.emitWarning = originalEmitWarning;
+    });
     const { client, calls } = createFakeClient({
         commandResponse: [
             ["get", 2, ["readonly"], 1, 1, 1],
@@ -277,6 +283,15 @@ test("attachNamespace prefixes command keys and supports runtime namespace updat
     assert.equal(client.namespace, undefined);
     await client.sendCommand(["SET", "counter", "2"]);
     assert.deepEqual(calls[4].args, ["SET", "counter", "2"]);
+    assert.deepEqual(warnings, [
+        [
+            "Assigning client.namespace is deprecated because it is shared mutable state; use client.withNamespace(namespace) instead.",
+            {
+                code: "YNODE_REDIS_NAMESPACE_SETTER_DEPRECATED",
+                type: "DeprecationWarning",
+            },
+        ],
+    ]);
 });
 
 test("attachNamespace prefixes generated command methods routed through public sendCommand", async () => {

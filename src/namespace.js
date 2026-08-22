@@ -17,6 +17,7 @@ import { attachMultiInterception } from "./namespace-multi.js";
 const MAX_SCOPED_NAMESPACE_CACHE_SIZE = 256;
 const COMMAND_SPEC_LOAD_TIMEOUT_MS = 5_000;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
+const NAMESPACE_SETTER_DEPRECATION_CODE = "YNODE_REDIS_NAMESPACE_SETTER_DEPRECATED";
 const NAMESPACE_UNSAFE_COMMAND_ERROR_CODE = "REDIS_NAMESPACE_UNSAFE_COMMAND";
 
 const PRIVATE_QUEUE_METHOD_COMMANDS = new Map([
@@ -331,6 +332,7 @@ export function attachNamespace(client, initialNamespace, options = {}) {
     let namespace = normalizeNamespace(initialNamespace);
     let namespacePrefix = namespace ? `${namespace}:` : "";
     let namespacePrefixBuffer = namespacePrefix ? Buffer.from(namespacePrefix) : null;
+    let namespaceSetterWarningEmitted = false;
     const scopedClientCache = new Map();
     const namespaceProcessedCommands = new WeakSet();
 
@@ -722,7 +724,18 @@ export function attachNamespace(client, initialNamespace, options = {}) {
             return namespace || undefined;
         },
         set(value) {
-            namespace = normalizeNamespace(value);
+            const nextNamespace = normalizeNamespace(value);
+            if (!namespaceSetterWarningEmitted) {
+                namespaceSetterWarningEmitted = true;
+                process.emitWarning(
+                    "Assigning client.namespace is deprecated because it is shared mutable state; use client.withNamespace(namespace) instead.",
+                    {
+                        code: NAMESPACE_SETTER_DEPRECATION_CODE,
+                        type: "DeprecationWarning",
+                    },
+                );
+            }
+            namespace = nextNamespace;
             namespacePrefix = namespace ? `${namespace}:` : "";
             namespacePrefixBuffer = namespacePrefix ? Buffer.from(namespacePrefix) : null;
         },

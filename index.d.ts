@@ -63,6 +63,10 @@ export interface RedisNamespaceHelpers {
 }
 
 export interface NamespacedRedisClientType extends RedisClientType, RedisNamespaceHelpers {
+    /**
+     * @deprecated Shared mutable namespace state can race across requests.
+     * Use `withNamespace(namespace)` to create an isolated scoped client.
+     */
     namespace?: string;
 }
 

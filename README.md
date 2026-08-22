@@ -95,7 +95,7 @@ await tenantA.set("counter", "1"); // alpha:counter
 await tenantB.set("counter", "1"); // beta:counter
 ```
 
-The mutable `fastify.redis.namespace` property is still supported for backward compatibility:
+The mutable `fastify.redis.namespace` property is deprecated shared state and is retained only for backward compatibility. Its first assignment emits `YNODE_REDIS_NAMESPACE_SETTER_DEPRECATED`; use `withNamespace()` for concurrent request handling:
 
 ```javascript
 fastify.redis.namespace = "klingon";
