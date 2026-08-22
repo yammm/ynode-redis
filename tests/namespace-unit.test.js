@@ -469,6 +469,31 @@ test("methods invoked through scoped and raw clients observe their active namesp
     assert.equal(client.raw.namespaceSnapshot(), undefined);
 });
 
+test("scoped and raw proxies invoke methods patched after the wrapper is cached", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],
+    });
+
+    attachNamespace(client, "global");
+    const scoped = client.withNamespace("alpha");
+
+    await scoped.get("status");
+    await client.raw.get("status");
+
+    client.get = function (key) {
+        return this.sendCommand(["GET", `patched-${key}`]);
+    };
+
+    await scoped.get("status");
+    await client.raw.get("status");
+
+    assert.deepEqual(calls[0].args, ["COMMAND"]);
+    assert.deepEqual(calls[1].args, ["GET", "alpha:status"]);
+    assert.deepEqual(calls[2].args, ["GET", "status"]);
+    assert.deepEqual(calls[3].args, ["GET", "alpha:patched-status"]);
+    assert.deepEqual(calls[4].args, ["GET", "patched-status"]);
+});
+
 test("keys containing namespace text remain distinct logical string and Buffer keys", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [["get", 2, ["readonly"], 1, 1, 1]],

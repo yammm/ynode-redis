@@ -184,7 +184,10 @@ function createScopedNamespaceProxy({
             }
 
             const wrapped = (...args) => {
-                const result = runWithScopedNamespace(() => value.apply(target, args));
+                // Resolve at invoke time so methods patched after the wrapper
+                // was cached are still honored.
+                const method = Reflect.get(target, property, target);
+                const result = runWithScopedNamespace(() => method.apply(target, args));
                 return bindAsyncIteratorContext(result, runWithScopedNamespace);
             };
             functionCache.set(property, wrapped);
@@ -227,7 +230,10 @@ function createRawClientProxy(client, runWithoutNamespace) {
             }
 
             const wrapped = (...args) => {
-                const result = runWithoutNamespace(() => value.apply(target, args));
+                // Resolve at invoke time so methods patched after the wrapper
+                // was cached are still honored.
+                const method = Reflect.get(target, property, target);
+                const result = runWithoutNamespace(() => method.apply(target, args));
                 return bindAsyncIteratorContext(result, runWithoutNamespace);
             };
             functionCache.set(property, wrapped);
