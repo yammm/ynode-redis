@@ -60,23 +60,55 @@ export interface RedisNamespaceScanOptions {
     cursor?: string | Buffer;
 }
 
-export interface RedisNamespaceHelpers {
-    readonly raw: RedisClientType;
-    withNamespace(namespace?: string): ScopedRedisClientType;
-    withoutNamespace<T>(callback: () => T): T;
-    registerNamespaceCommand(
-        command: string,
-        spec: RedisNamespaceCommandSpec,
-    ): NamespacedRedisClientType;
-    registerNamespaceCommands(commands: RedisNamespaceCommandMap): NamespacedRedisClientType;
-    scanNamespaceIterator(
-        options?: RedisNamespaceScanOptions,
-    ): AsyncGenerator<Array<string | Buffer>, void, unknown>;
+export interface RedisHealthHelpers {
     readiness(): RedisReadinessStatus;
     healthcheck(options?: RedisHealthcheckOptions): Promise<RedisHealthcheckResult>;
 }
 
-export interface NamespacedRedisClientType extends RedisClientType, RedisNamespaceHelpers {
+export type ManagedRedisClientOptions = Partial<RedisClientOptions> & {
+    /** Namespace for this connection. Defaults to the factory client's active namespace. */
+    namespace?: string;
+    /** Custom namespace metadata. Defaults to the plugin registration metadata. */
+    namespaceCommands?: RedisNamespaceCommandMap;
+    /** Connection deadline. Defaults to the plugin startupTimeout. */
+    startupTimeout?: number;
+};
+
+export type ManagedRedisSubscriberOptions = Partial<RedisClientOptions> & {
+    /** Connection deadline. Defaults to the plugin startupTimeout. */
+    startupTimeout?: number;
+    /** Pub/sub channels are global and managed subscribers cannot be namespaced. */
+    namespace?: never;
+    /** Pub/sub subscribers do not install namespace command metadata. */
+    namespaceCommands?: never;
+};
+
+export interface RedisManagedClientFactory {
+    createManagedClient(options?: ManagedRedisClientOptions): Promise<ManagedRedisClientType>;
+    createManagedSubscriber(
+        options?: ManagedRedisSubscriberOptions,
+    ): Promise<ManagedRedisSubscriberType>;
+}
+
+export interface RedisNamespaceHelpers<
+    TClient = NamespacedRedisClientType,
+    TScopedClient = ScopedRedisClientType,
+> extends RedisHealthHelpers {
+    readonly raw: RedisClientType;
+    withNamespace(namespace?: string): TScopedClient;
+    withoutNamespace<T>(callback: () => T): T;
+    registerNamespaceCommand(command: string, spec: RedisNamespaceCommandSpec): TClient;
+    registerNamespaceCommands(commands: RedisNamespaceCommandMap): TClient;
+    scanNamespaceIterator(
+        options?: RedisNamespaceScanOptions,
+    ): AsyncGenerator<Array<string | Buffer>, void, unknown>;
+}
+
+export interface NamespacedRedisClientType
+    extends
+        RedisClientType,
+        RedisNamespaceHelpers<NamespacedRedisClientType, ScopedRedisClientType>,
+        RedisManagedClientFactory {
     /**
      * @deprecated Shared mutable namespace state can race across requests.
      * Use `withNamespace(namespace)` to create an isolated scoped client.
@@ -84,9 +116,33 @@ export interface NamespacedRedisClientType extends RedisClientType, RedisNamespa
     namespace?: string;
 }
 
-export interface ScopedRedisClientType extends RedisClientType, RedisNamespaceHelpers {
+export interface ScopedRedisClientType
+    extends
+        RedisClientType,
+        RedisNamespaceHelpers<NamespacedRedisClientType, ScopedRedisClientType>,
+        RedisManagedClientFactory {
     readonly namespace?: string;
 }
+
+export interface ManagedRedisClientType
+    extends
+        RedisClientType,
+        RedisNamespaceHelpers<ManagedRedisClientType, ManagedScopedRedisClientType> {
+    /**
+     * @deprecated Shared mutable namespace state can race across requests.
+     * Use `withNamespace(namespace)` to create an isolated scoped client.
+     */
+    namespace?: string;
+}
+
+export interface ManagedScopedRedisClientType
+    extends
+        RedisClientType,
+        RedisNamespaceHelpers<ManagedRedisClientType, ManagedScopedRedisClientType> {
+    readonly namespace?: string;
+}
+
+export interface ManagedRedisSubscriberType extends RedisClientType, RedisHealthHelpers {}
 
 declare module "fastify" {
     interface FastifyInstance {

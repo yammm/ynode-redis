@@ -33,6 +33,7 @@ import { createClient } from "redis";
 import { assertRedisNotRegistered } from "./guard.js";
 import { attachHealth } from "./health.js";
 import { attachLifecycle, startupTimeoutMs } from "./lifecycle.js";
+import { attachManagedClients } from "./managed.js";
 import { attachNamespace, normalizeNamespace } from "./namespace.js";
 
 /**
@@ -66,10 +67,14 @@ export default fp(
 
         attachNamespace(client, normalizedNamespace, { namespaceCommands });
         attachHealth(client);
+        const managedClients = attachManagedClients(fastify, client, {
+            namespaceCommands,
+            startupTimeout: startupTimeoutMs(options),
+        });
 
         // sharing is caring
         fastify.decorate("redis", client);
-        attachLifecycle(fastify, client, options);
+        attachLifecycle(fastify, client, options, { beforeClose: managedClients.closeAll });
     },
     {
         fastify: "5.x",

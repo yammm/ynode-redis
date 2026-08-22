@@ -1,5 +1,7 @@
 import fastifyRedis, {
     type FastifyRedisOptions,
+    type ManagedRedisClientType,
+    type ManagedRedisSubscriberType,
     type NamespacedRedisClientType,
     type RedisHealthcheckResult,
     type RedisNamespaceCommandMap,
@@ -41,6 +43,19 @@ const namespaceScanOptions = {
 for await (const keys of scoped.scanNamespaceIterator(namespaceScanOptions)) {
     keys satisfies Array<string | Buffer>;
 }
+
+const managedClient: ManagedRedisClientType = await scoped.createManagedClient({
+    name: "redis-worker",
+    startupTimeout: 2_000,
+});
+const managedSubscriber: ManagedRedisSubscriberType = await client.createManagedSubscriber({
+    name: "redis-subscriber",
+});
+managedClient.withNamespace("nested").readiness();
+await managedSubscriber.healthcheck();
+
+// @ts-expect-error Pub/sub subscribers cannot use key namespaces.
+void client.createManagedSubscriber({ namespace: "tenant" });
 
 // @ts-expect-error startupTimeout must be numeric.
 const invalidOptions: FastifyRedisOptions = { startupTimeout: "slow" };

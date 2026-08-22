@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import net from "node:net";
 import { test } from "node:test";
 
 import Fastify from "fastify";
 import { defineScript } from "redis";
 
+import { attachLifecycle } from "../src/lifecycle.js";
 import redisPlugin from "../src/plugin.js";
 
 function createFastifyHarness() {
@@ -274,6 +276,23 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     }
     assert.deepEqual(scannedLogicalKeys.sort(), scanKeys.sort());
 
+    const managedTenant = await tenantA.createManagedClient({
+        name: "ynode-redis-managed-integration-test",
+    });
+    const managedSubscriber = await fastify.redis.createManagedSubscriber({
+        name: "ynode-redis-subscriber-integration-test",
+    });
+    assert.equal(managedTenant.namespace, "alpha");
+    assert.equal((await managedTenant.healthcheck()).ok, true);
+    assert.equal((await managedSubscriber.healthcheck()).ok, true);
+
+    const channel = `${key}:events`;
+    const messages = [];
+    await managedSubscriber.subscribe(channel, (message) => messages.push(message));
+    await managedTenant.raw.publish(channel, "ready");
+    await waitForAssertion(() => assert.deepEqual(messages, ["ready"]));
+    assert.equal((await managedSubscriber.healthcheck()).ok, true);
+
     const alreadyPrefixedLogicalKey = `alpha:${key}:logical`;
     await tenantA.set(alreadyPrefixedLogicalKey, "still-logical");
     assert.equal(await tenantA.get(alreadyPrefixedLogicalKey), "still-logical");
@@ -381,6 +400,8 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
 
     await onClose();
     assert.equal(fastify.redis.isOpen, false);
+    assert.equal(managedTenant.isOpen, false);
+    assert.equal(managedSubscriber.isOpen, false);
 });
 
 test("plugin registers and decorates a real Fastify instance", async (t) => {
@@ -715,6 +736,39 @@ test("onClose absorbs close errors and logs a credential-safe label", async () =
     const output = JSON.stringify(logs.warn);
     assert.doesNotMatch(output, new RegExp(password));
     assert.match(output, /Error closing Redis client/);
+});
+
+test("onClose still closes the primary client when managed cleanup rejects", async () => {
+    const { fastify, hooks, logs } = createFastifyHarness();
+    const client = new EventEmitter();
+    client.isOpen = true;
+    client.closeCalls = 0;
+    client.close = async () => {
+        client.closeCalls += 1;
+        client.isOpen = false;
+    };
+
+    attachLifecycle(
+        fastify,
+        client,
+        { startupTimeout: 0 },
+        {
+            beforeClose: async () => {
+                throw new Error("managed cleanup failed");
+            },
+        },
+    );
+
+    await hooks.get("onClose")();
+
+    assert.equal(client.closeCalls, 1);
+    assert.equal(client.isOpen, false);
+    assert.equal(
+        logs.warn.some((entries) =>
+            entries.some((entry) => String(entry).includes("managed Redis connections")),
+        ),
+        true,
+    );
 });
 
 test("onClose prefers close, then quit, then destroy/disconnect fallbacks", async () => {

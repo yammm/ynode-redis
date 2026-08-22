@@ -8,7 +8,7 @@ A better [Redis](https://redis.io/) [Fastify](https://www.fastify.io/) plugin th
 
 ## Why?
 
-A lightweight **Fastify** plugin that exposes a single **node‑redis** client (`redis` package) on your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for you.
+A lightweight **Fastify** plugin that exposes a primary **node‑redis** client (`redis` package) on your Fastify instance and handles connection lifecycle (connect → ready → reconnect → close) for you.
 
 - ✅ Uses the **official** [`redis`](https://www.npmjs.com/package/redis) client (not ioredis)
 - ✅ Clean Fastify integration with proper startup/shutdown hooks
@@ -69,6 +69,26 @@ This plugin manages Redis connection lifecycle using Fastify hooks:
 Startup is fail-fast. If Redis cannot be reached (or startup metadata commands fail), `fastify.listen()` rejects and the server will not start.
 
 Startup is bounded to 10 seconds by default. Set `startupTimeout: 0` to use node-redis connection behavior without a plugin-level deadline.
+
+### Managed duplicate and subscriber connections
+
+Some Redis operations need an independent socket, especially pub/sub. Use the asynchronous managed factories instead of calling node-redis `duplicate()` directly:
+
+```javascript
+const tenant = fastify.redis.withNamespace("codex");
+const workerRedis = await tenant.createManagedClient({ name: "worker" });
+const subscriber = await fastify.redis.createManagedSubscriber({ name: "events" });
+
+await workerRedis.set("status", "ready"); // writes codex:status
+await subscriber.subscribe("codex:events", (message) => {
+    fastify.log.info({ message });
+});
+```
+
+- `createManagedClient(options?)` connects a duplicate with namespace, raw, scan, readiness, and healthcheck helpers. It inherits the factory client's active namespace unless `options.namespace` is provided.
+- `createManagedSubscriber(options?)` connects an intentionally un-namespaced duplicate with readiness and healthcheck helpers. Pub/sub channels remain global, so include any tenant identity in the channel protocol.
+
+Both factories inherit the plugin's `startupTimeout`; override it per connection with `options.startupTimeout`. Managed startup is cancelled during Fastify shutdown, and every successfully created or still-connecting managed client is closed before the primary connection. Other options are forwarded to node-redis `duplicate()` without mutating the caller's object.
 
 ## Key Namespacing
 
@@ -177,7 +197,7 @@ Namespacing rewrites command inputs, not Redis replies. Commands that return key
 
 ## Health and Readiness
 
-This plugin exposes simple probe helpers:
+The primary client and every managed connection expose simple probe helpers:
 
 - `fastify.redis.readiness()`: lightweight state snapshot
 - `fastify.redis.healthcheck()`: ping-based health check that never throws
@@ -200,6 +220,8 @@ const health = await fastify.redis.healthcheck();
 - `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. `:` is reserved as the separator; a trailing colon is normalized away, while embedded colons are rejected. Control characters, embedded whitespace, and the glob metacharacters `*`, `?`, `[`, and `]` are also rejected. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
 - `namespaceCommands` (`object` or `Map`, optional): custom command key metadata for Redis modules or deployments where `COMMAND` introspection is unavailable. Each command can define `{ firstKey, lastKey, step }` key positions or `{ keyless: true }`.
 - `startupTimeout` (`number`, default: `10000`): maximum startup time in milliseconds. Set to `0` to disable the plugin deadline.
+
+Managed client factories also consume `startupTimeout`. `createManagedClient()` additionally consumes `namespace` and `namespaceCommands`; when omitted, it inherits the active namespace and registration-time command metadata. These managed-only fields are never forwarded to node-redis `duplicate()`. `createManagedSubscriber()` rejects namespace options because Redis channels are not keys.
 
 ### Redis client options
 

@@ -35,6 +35,21 @@ function startupTimeoutError(timeoutMs) {
 }
 
 /**
+ * Creates an AbortError indicating that Redis startup was cancelled.
+ * @param {*} reason - AbortSignal reason.
+ * @returns {Error} Error with code REDIS_STARTUP_ABORTED.
+ */
+function startupAbortError(reason) {
+    const error = new Error("Redis startup was aborted");
+    error.name = "AbortError";
+    error.code = "REDIS_STARTUP_ABORTED";
+    if (reason !== undefined) {
+        error.cause = reason;
+    }
+    return error;
+}
+
+/**
  * Best-effort teardown of a Redis client after a startup timeout. Tries
  * destroy, disconnect, close, and quit in order, stopping at the first
  * available method.
@@ -45,7 +60,7 @@ function startupTimeoutError(timeoutMs) {
  * path first.
  * @param {object} client - Redis client instance.
  */
-async function abortStartup(client) {
+export async function abortStartup(client) {
     const closeMethods = ["destroy", "disconnect", "close", "quit"];
 
     for (const method of closeMethods) {
@@ -81,27 +96,73 @@ async function abortStartup(client) {
  * @param {number} timeoutMs - Deadline in milliseconds (0 to disable).
  * @param {function(): Promise<*>} startupFlow - Async function that
  *   connects and initializes the client.
+ * @param {object} [options] - Optional cancellation behavior.
+ * @param {AbortSignal} [options.signal] - Signal that cancels startup.
+ * @param {function(*): Error} [options.abortError] - Abort error factory.
+ * @param {boolean} [options.abortOnSignal=true] - Whether signal cancellation
+ *   also starts best-effort client teardown.
+ * @param {boolean} [options.abortOnTimeout=true] - Whether timeout also starts
+ *   best-effort client teardown.
  * @returns {Promise<*>} Result of the startup flow.
  */
-async function startupWithTimeout(client, timeoutMs, startupFlow) {
-    if (timeoutMs === 0) {
+export async function startupWithTimeout(client, timeoutMs, startupFlow, options = {}) {
+    const signal = options.signal;
+    const createAbortError = options.abortError ?? startupAbortError;
+    const abortOnSignal = options.abortOnSignal !== false;
+    const abortOnTimeout = options.abortOnTimeout !== false;
+
+    if (!signal && timeoutMs === 0) {
         return startupFlow();
+    }
+
+    if (signal?.aborted) {
+        if (abortOnSignal) {
+            void abortStartup(client);
+        }
+        throw createAbortError(signal.reason);
     }
 
     let settled = false;
     let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => {
-            if (settled) {
-                return;
-            }
-            settled = true;
-            reject(startupTimeoutError(timeoutMs));
+    let abortListener;
+    const interruptionPromises = [];
 
-            // Fire-and-forget forced teardown after preserving timeout error identity.
-            void abortStartup(client);
-        }, timeoutMs);
-    });
+    if (timeoutMs > 0) {
+        interruptionPromises.push(
+            new Promise((_, reject) => {
+                timeoutId = setTimeout(() => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    reject(startupTimeoutError(timeoutMs));
+
+                    if (abortOnTimeout) {
+                        // Fire-and-forget forced teardown after preserving timeout error identity.
+                        void abortStartup(client);
+                    }
+                }, timeoutMs);
+            }),
+        );
+    }
+
+    if (signal) {
+        interruptionPromises.push(
+            new Promise((_, reject) => {
+                abortListener = () => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    reject(createAbortError(signal.reason));
+                    if (abortOnSignal) {
+                        void abortStartup(client);
+                    }
+                };
+                signal.addEventListener("abort", abortListener, { once: true });
+            }),
+        );
+    }
 
     const trackedStartup = (async () => {
         try {
@@ -112,9 +173,12 @@ async function startupWithTimeout(client, timeoutMs, startupFlow) {
     })();
 
     try {
-        return await Promise.race([trackedStartup, timeoutPromise]);
+        return await Promise.race([trackedStartup, ...interruptionPromises]);
     } finally {
         clearTimeout(timeoutId);
+        if (signal && abortListener) {
+            signal.removeEventListener("abort", abortListener);
+        }
     }
 }
 
@@ -124,8 +188,11 @@ async function startupWithTimeout(client, timeoutMs, startupFlow) {
  * @param {FastifyInstance} fastify - Fastify server instance.
  * @param {object} client - Redis client instance.
  * @param {object} [options] - Plugin options (used for url and startupTimeout).
+ * @param {object} [lifecycle] - Additional lifecycle callbacks.
+ * @param {function(): Promise<void>} [lifecycle.beforeClose] - Runs before the
+ *   primary Redis client is closed.
  */
-export function attachLifecycle(fastify, client, options) {
+export function attachLifecycle(fastify, client, options, lifecycle = {}) {
     let info;
     let startupComplete = false;
     const startupTimeout = startupTimeoutMs(options);
@@ -179,6 +246,12 @@ export function attachLifecycle(fastify, client, options) {
     });
 
     fastify.addHook("onClose", async () => {
+        try {
+            await lifecycle.beforeClose?.();
+        } catch (error) {
+            fastify.log.warn({ err: error }, "Error closing managed Redis connections");
+        }
+
         if (!client.isOpen) {
             return;
         }

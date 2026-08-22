@@ -1,6 +1,6 @@
 {
     "name": "@ynode/redis",
-    "version": "1.7.0+336868",
+    "version": "1.7.0+336878",
     "description": "Fastify 5 plugin for Redis (node-redis) with automatic connection lifecycle, health checks, and namespace support.",
     "main": "src/plugin.js",
     "types": "index.d.ts",
@@ -66,7 +66,7 @@
         "lint": "eslint .",
         "lint:staged": "eslint --no-warn-ignored $(git diff --cached --name-only --diff-filter=ACMRTUXB | tr '\\n' ' ')",
         "lint:fix": "eslint . --fix",
-        "test:unit": "node --test tests/health-unit.test.js tests/namespace-unit.test.js",
+        "test:unit": "node --test tests/health-unit.test.js tests/managed-unit.test.js tests/namespace-unit.test.js",
         "test:integration": "node --test tests/plugin-integration.test.js",
         "ver:preview": "npx autover --no-amend --dry-run --short",
         "ver:apply": "npx autover --guard-unchanged --short",
