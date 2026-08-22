@@ -320,6 +320,15 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         typeof client._executeMulti === "function" ? client._executeMulti.bind(client) : null;
     const rawExecutePipeline =
         typeof client._executePipeline === "function" ? client._executePipeline.bind(client) : null;
+    const requiresPrivateQueueInterception = Boolean(
+        fallbackInternalClient &&
+        (typeof client.MULTI === "function" || typeof client.multi === "function"),
+    );
+    if (requiresPrivateQueueInterception && (!rawExecuteMulti || !rawExecutePipeline)) {
+        throw namespaceCompatibilityError(
+            "node-redis v6 MULTI/pipeline executors _executeMulti and _executePipeline are required.",
+        );
+    }
     if (Boolean(rawExecuteMulti) !== Boolean(rawExecutePipeline)) {
         throw namespaceCompatibilityError(
             "node-redis must expose both _executeMulti and _executePipeline, or neither.",

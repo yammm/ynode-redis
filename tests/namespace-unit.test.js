@@ -1003,6 +1003,20 @@ test("installed node-redis v6 blocks private connection queues and invalid queue
     });
 });
 
+test("installed node-redis v6 fails closed when both private queue executors disappear", () => {
+    const client = createClient();
+    client._executeMulti = undefined;
+    client._executePipeline = undefined;
+
+    assert.throws(
+        () => attachNamespace(client, "alpha"),
+        (error) => {
+            assert.equal(error.code, "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT");
+            return /_executeMulti and _executePipeline are required/.test(error.message);
+        },
+    );
+});
+
 test("xread option tokens are skipped without consuming stream keys", async () => {
     const { client, calls } = createFakeClient({ commandResponse: [] });
 

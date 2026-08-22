@@ -140,6 +140,10 @@ Pub/sub channels are not Redis keys and cannot be prefixed transparently without
 
 Server/control-plane commands (`ACL`, `CLIENT`, `CLUSTER`, `CONFIG`, `FUNCTION`, `MODULE`, `SCRIPT`, persistence and replication controls), destructive database commands (`FLUSHDB`, `FLUSHALL`, `SWAPDB`), and connection-state commands (`AUTH`, `HELLO`, `MONITOR`, `RESET`, `SELECT`, direct transaction controls) fail closed with `REDIS_NAMESPACE_UNSAFE_COMMAND` whenever a namespace is active. Use `client.raw` only when the server-wide or connection-wide effect is intentional. The safe `client.multi()`/pipeline factories remain namespace-aware; a raw transaction must be created with `client.raw.multi()`.
 
+### Namespace safety migration
+
+Namespaced clients in earlier releases allowed pub/sub, monitor/reset/select, and generated administrative methods to reach Redis without a namespace-local meaning. These operations now require an explicit raw client. Replace calls such as `tenant.subscribe(...)`, `tenant.select(...)`, or `tenant.configGet(...)` with `tenant.raw.subscribe(...)`, `tenant.raw.select(...)`, or `tenant.raw.configGet(...)`, and include the tenant identifier in pub/sub channel names where isolation is expected. Key-bearing transaction and pipeline commands continue to use `tenant.multi()` and are prefixed automatically.
+
 Commands whose key positions Redis reports as movable are rewritten when the plugin has an exact resolver. If an active namespace cannot be applied safely, the command fails closed instead of running against unprefixed keys; use `raw` only when that database-wide access is intentional.
 
 For Redis modules or custom commands that are not available through `COMMAND` introspection, provide explicit key metadata with `namespaceCommands`:
