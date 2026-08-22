@@ -26,7 +26,7 @@ npm install @ynode/redis redis
 
 ## Usage
 
-Register the plugin with your Fastify instance. The plugin consumes `namespace` and `startupTimeout`; all other options are passed to the underlying node-redis `createClient` method.
+Register the plugin with your Fastify instance. The plugin consumes `namespace`, `namespaceCommands`, and `startupTimeout`; all other options are passed to the underlying node-redis `createClient` method.
 
 ```javascript
 import Fastify from "fastify";
