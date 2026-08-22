@@ -85,6 +85,7 @@ function namespaceCompatibilityError(message) {
 /**
  * Creates an error for a command whose movable keys cannot be rewritten safely.
  * @param {string} command - Uppercase Redis command name.
+ * @param {string} [reason="uses movable keys"] - Why the command cannot be namespaced.
  * @returns {Error} Error with code REDIS_NAMESPACE_UNSAFE_COMMAND.
  */
 function namespaceUnsafeCommandError(command, reason = "uses movable keys") {
