@@ -181,7 +181,7 @@ const health = await fastify.redis.healthcheck();
 ### Plugin-specific options
 
 - `name` (`string`, optional): connection name used with Redis `CLIENT SETNAME`. Default: `@ynode/redis`
-- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. `:` is reserved as the separator; a trailing colon is normalized away, while embedded colons are rejected. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
+- `namespace` (`string`, optional): key prefix for Redis commands that operate on keys. `:` is reserved as the separator; a trailing colon is normalized away, while embedded colons are rejected. Control characters, embedded whitespace, and the glob metacharacters `*`, `?`, `[`, and `]` are also rejected. Example: `namespace: "codex"` prefixes keys as `codex:<key>`.
 - `namespaceCommands` (`object` or `Map`, optional): custom command key metadata for Redis modules or deployments where `COMMAND` introspection is unavailable. Each command can define `{ firstKey, lastKey, step }` key positions or `{ keyless: true }`.
 - `startupTimeout` (`number`, default: `10000`): maximum startup time in milliseconds. Set to `0` to disable the plugin deadline.
 

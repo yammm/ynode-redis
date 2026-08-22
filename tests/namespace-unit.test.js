@@ -389,6 +389,32 @@ test("namespace values reserve embedded colons to prevent cross-scope key collis
     assert.equal(client.namespace, "global");
 });
 
+test("namespace validation rejects control characters, whitespace, and glob metacharacters", () => {
+    const cases = [
+        ["ten\u0000ant", /must not contain control characters/],
+        ["ten\u001bant", /must not contain control characters/],
+        ["ten\nant", /must not contain control characters/],
+        ["ten ant", /must not contain whitespace/],
+        ["ten*ant", /must not contain the glob metacharacters/],
+        ["ten?ant", /must not contain the glob metacharacters/],
+        ["ten[ant", /must not contain the glob metacharacters/],
+        ["ten]ant", /must not contain the glob metacharacters/],
+    ];
+
+    for (const [value, message] of cases) {
+        const { client } = createFakeClient();
+        assert.throws(() => attachNamespace(client, value), { name: "TypeError", message });
+
+        const { client: attached } = createFakeClient();
+        attachNamespace(attached, "global");
+        assert.throws(() => attached.withNamespace(value), { name: "TypeError", message });
+        assert.throws(() => {
+            attached.namespace = value;
+        }, TypeError);
+        assert.equal(attached.namespace, "global");
+    }
+});
+
 test("withNamespace cache evicts least recently used scoped clients", () => {
     const { client } = createFakeClient();
     const scopedCacheLimit = 256;

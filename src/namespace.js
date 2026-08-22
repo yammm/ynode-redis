@@ -18,10 +18,30 @@ const COMMAND_SPEC_LOAD_TIMEOUT_MS = 5_000;
 const NAMESPACE_COMPATIBILITY_ERROR_CODE = "REDIS_NAMESPACE_INCOMPATIBLE_CLIENT";
 const NAMESPACE_UNSAFE_COMMAND_ERROR_CODE = "REDIS_NAMESPACE_UNSAFE_COMMAND";
 
+const NAMESPACE_GLOB_METACHARACTERS = /[*?[\]]/;
+
+/**
+ * Returns true when the value contains an ASCII control character.
+ * @param {string} value - Candidate namespace text.
+ * @returns {boolean} True when a control character is present.
+ */
+function containsControlCharacters(value) {
+    for (const character of value) {
+        const codePoint = character.codePointAt(0);
+        if (codePoint <= 0x1f || codePoint === 0x7f) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * Strips trailing colons and whitespace from a namespace value. Embedded
  * colons are rejected because they make distinct namespace/key pairs map to
- * the same physical Redis key. Returns empty string for null/undefined.
+ * the same physical Redis key. Control characters, embedded whitespace, and
+ * glob metacharacters are rejected because they corrupt logs and
+ * MATCH-pattern tooling built on top of prefixed keys. Returns empty string
+ * for null/undefined.
  * @param {*} value - Raw namespace input.
  * @returns {string} Normalized namespace without trailing separator.
  */
@@ -33,6 +53,17 @@ export function normalizeNamespace(value) {
     const normalized = String(value).trim().replace(/:+$/, "");
     if (normalized.includes(":")) {
         throw new TypeError("Redis namespace must not contain ':'");
+    }
+    if (containsControlCharacters(normalized)) {
+        throw new TypeError("Redis namespace must not contain control characters");
+    }
+    if (/\s/.test(normalized)) {
+        throw new TypeError("Redis namespace must not contain whitespace");
+    }
+    if (NAMESPACE_GLOB_METACHARACTERS.test(normalized)) {
+        throw new TypeError(
+            "Redis namespace must not contain the glob metacharacters '*', '?', '[', or ']'",
+        );
     }
     return normalized;
 }
