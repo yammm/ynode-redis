@@ -5,6 +5,7 @@ import {
     commandNameToken,
     DEFAULT_COMMAND_SPECS,
     DEFAULT_KEYLESS_COMMANDS,
+    DESTRUCTIVE_DATABASE_COMMANDS,
     keyIndexesForCommand,
     keyIndexesForDynamicCountCommand,
     keyIndexesForMovableCommand,
@@ -462,6 +463,10 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         const command = commandNameToken(args[0]);
         if (!command) {
             return args;
+        }
+
+        if (DESTRUCTIVE_DATABASE_COMMANDS.has(command)) {
+            throw namespaceUnsafeCommandError(command, "operates on the entire database");
         }
 
         const dynamicKeyIndexes = keyIndexesForDynamicCountCommand(command, args);

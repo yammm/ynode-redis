@@ -147,6 +147,7 @@ const DEFAULT_COMMAND_SPECS = new Map([
     ["ZSCORE", { firstKey: 1, lastKey: 1, step: 1 }],
 ]);
 
+const DESTRUCTIVE_DATABASE_COMMANDS = new Set(["FLUSHALL", "FLUSHDB", "SWAPDB"]);
 const DYNAMIC_KEY_COUNT_COMMANDS = new Set([
     "EVAL",
     "EVAL_RO",
@@ -602,6 +603,7 @@ export {
     commandNameToken,
     DEFAULT_COMMAND_SPECS,
     DEFAULT_KEYLESS_COMMANDS,
+    DESTRUCTIVE_DATABASE_COMMANDS,
     keyIndexesForCommand,
     keyIndexesForDynamicCountCommand,
     keyIndexesForMovableCommand,

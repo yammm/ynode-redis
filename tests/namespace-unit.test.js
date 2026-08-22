@@ -762,6 +762,43 @@ test("movable-key commands prefix every resolved key position", async () => {
     ]);
 });
 
+test("database-wide destructive commands fail closed on namespaced clients", async () => {
+    const { client, calls } = createFakeClient({
+        commandResponse: [
+            ["flushdb", -1, ["write"], 0, 0, 0],
+            ["flushall", -1, ["write"], 0, 0, 0],
+            ["swapdb", 3, ["write"], 0, 0, 0],
+        ],
+    });
+
+    attachNamespace(client, "alpha");
+    const scoped = client.withNamespace("beta");
+
+    for (const args of [["FLUSHDB"], ["FLUSHALL", "ASYNC"], ["SWAPDB", "0", "1"]]) {
+        await assert.rejects(
+            async () => client.sendCommand(args),
+            (error) => {
+                assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+                return /operates on the entire database/.test(error.message);
+            },
+        );
+        await assert.rejects(
+            async () => scoped.sendCommand(args),
+            (error) => {
+                assert.equal(error.code, "REDIS_NAMESPACE_UNSAFE_COMMAND");
+                return /operates on the entire database/.test(error.message);
+            },
+        );
+    }
+
+    await client.raw.sendCommand(["FLUSHDB"]);
+
+    assert.deepEqual(
+        calls.map(({ args }) => args),
+        [["COMMAND"], ["FLUSHDB"]],
+    );
+});
+
 test("unsupported server-discovered movable-key commands fail closed", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [["futuremove", -2, ["write", "movablekeys"], 0, 0, 0]],
