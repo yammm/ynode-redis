@@ -50,6 +50,9 @@ import { attachNamespace, normalizeNamespace } from "./namespace.js";
 export default fp(
     async function redisPlugin(fastify, options) {
         assertRedisNotRegistered(fastify);
+        // Validation-only call: fail fast on a bad startupTimeout before the
+        // client is created. attachLifecycle resolves the value again when it
+        // arms the startup deadline, so the result here is intentionally unused.
         startupTimeoutMs(options);
         const {
             namespace,
