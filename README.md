@@ -136,6 +136,8 @@ Hash, set, and sorted-set scan iterators retain the scope of the client that cre
 
 Namespacing is a key-rewriting convenience, not an authorization boundary. Database-wide commands such as `SCAN`, `KEYS`, and `RANDOMKEY` operate on the physical database and are not tenant-filtered. A client returned by `duplicate()` is also independent and is not namespaced or closed by this plugin. Use Redis ACLs or separate databases/instances when hostile tenants must be isolated.
 
+Pub/sub is not namespaced. `PUBLISH`, `SUBSCRIBE`, and their sharded and pattern variants address channels rather than keys, so channel names are shared across all namespaces: a message published from one tenant's scoped client is delivered to every subscriber on that channel. Include the tenant in the channel name yourself when tenant-scoped messaging is required.
+
 Destructive database-wide commands are refused outright: `FLUSHDB`, `FLUSHALL`, and `SWAPDB` fail closed with `REDIS_NAMESPACE_UNSAFE_COMMAND` on any namespaced client because they would erase or remap every tenant's keys, not just the active namespace. Use `raw` when that database-wide effect is intentional.
 
 Commands whose key positions Redis reports as movable are rewritten when the plugin has an exact resolver. If an active namespace cannot be applied safely, the command fails closed instead of running against unprefixed keys; use `raw` only when that database-wide access is intentional.
