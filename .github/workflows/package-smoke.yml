@@ -38,6 +38,13 @@ jobs:
                   import { readFileSync, writeFileSync } from "node:fs";
 
                   const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+                  const [pack] = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/pack.json`, "utf8"));
+                  const packedFiles = new Set(pack.files.map(({ path }) => path));
+                  for (const requiredFile of ["package.json", "CHANGELOG.md", "README.md", "LICENSE", "index.d.ts"]) {
+                      if (!packedFiles.has(requiredFile)) {
+                          throw new Error(`Packed artifact is missing ${requiredFile}`);
+                      }
+                  }
                   const specifiers = new Set();
                   if (pkg.exports || pkg.main || pkg.module) {
                       specifiers.add(pkg.name);
@@ -51,7 +58,12 @@ jobs:
                       }
                   }
                   const bins = typeof pkg.bin === "string" ? [pkg.name] : Object.keys(pkg.bin ?? {});
-                  writeFileSync(`${process.env.RUNNER_TEMP}/smoke.json`, JSON.stringify({ bins, specifiers: [...specifiers] }));
+                  writeFileSync(`${process.env.RUNNER_TEMP}/smoke.json`, JSON.stringify({
+                      bins,
+                      packageName: pkg.name,
+                      packageJsonExport: Object.hasOwn(pkg.exports ?? {}, "./package.json"),
+                      specifiers: [...specifiers],
+                  }));
                   NODE
 
                   tarball="$(node -e 'const fs = require("node:fs"); const [pack] = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); console.log(pack.filename);' "$RUNNER_TEMP/pack.json")"
@@ -62,9 +74,18 @@ jobs:
                   npm install "$RUNNER_TEMP/$tarball" >/dev/null
                   node --input-type=module <<'NODE'
                   import { readFileSync } from "node:fs";
+                  import { createRequire } from "node:module";
                   import { spawnSync } from "node:child_process";
 
-                  const { bins, specifiers } = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/smoke.json`, "utf8"));
+                  const { bins, packageName, packageJsonExport, specifiers } = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/smoke.json`, "utf8"));
+                  if (!packageJsonExport) {
+                      throw new Error("Package must export ./package.json");
+                  }
+                  const require = createRequire(import.meta.url);
+                  const metadata = require(`${packageName}/package.json`);
+                  if (metadata.name !== packageName) {
+                      throw new Error(`Unexpected package metadata for ${packageName}`);
+                  }
                   for (const specifier of specifiers) {
                       await import(specifier);
                   }

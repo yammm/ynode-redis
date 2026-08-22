@@ -20,13 +20,14 @@ If you are developing on a Windows machine, please run the dedicated batch scrip
 .\scripts\setup-hooks.cmd
 ```
 
-\n### Development Commands
+### Development Commands
 
 ```bash
 # Run the standard test suite
 npm run test
 
-# Run the ESLint/Prettier formatters
+# Check formatting and run ESLint
+npm run format:check
 npm run lint
 
 # Generate JSDoc documentation
@@ -44,6 +45,6 @@ To release a new version seamlessly:
 3. Add the **`autover-apply`** label to the Pull Request.
 4. Merge the Pull Request.
 
-Upon merge, the GitHub Action runner will automatically bump the package version, update the `CHANGELOG.md`, create a Git tag, and commit the release directly to `main`.
+Upon merge, the GitHub Action runner will automatically bump the package version, update the `CHANGELOG.md`, and commit the release directly to `main`. Tag creation is intentionally disabled in the checked-in workflow.
 
 > **Note:** Direct commits to `main` are supported but will gracefully skip the `autover` pipeline to prevent versioning collisions.
