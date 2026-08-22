@@ -49,6 +49,17 @@ export interface RedisHealthcheckOptions {
     timeoutMs?: number;
 }
 
+export interface RedisNamespaceScanOptions {
+    /** Logical Redis glob. The active namespace prefix is prepended automatically. */
+    MATCH?: string | Buffer;
+    /** Redis COUNT hint. */
+    COUNT?: number;
+    /** Redis value-type filter. */
+    TYPE?: string | Buffer;
+    /** Initial Redis SCAN cursor. */
+    cursor?: string | Buffer;
+}
+
 export interface RedisNamespaceHelpers {
     readonly raw: RedisClientType;
     withNamespace(namespace?: string): ScopedRedisClientType;
@@ -58,6 +69,9 @@ export interface RedisNamespaceHelpers {
         spec: RedisNamespaceCommandSpec,
     ): NamespacedRedisClientType;
     registerNamespaceCommands(commands: RedisNamespaceCommandMap): NamespacedRedisClientType;
+    scanNamespaceIterator(
+        options?: RedisNamespaceScanOptions,
+    ): AsyncGenerator<Array<string | Buffer>, void, unknown>;
     readiness(): RedisReadinessStatus;
     healthcheck(options?: RedisHealthcheckOptions): Promise<RedisHealthcheckResult>;
 }

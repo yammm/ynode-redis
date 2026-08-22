@@ -13,7 +13,15 @@ const GET_BY_KEY_SCRIPT = defineScript({
     },
 });
 
-function createFakeClient({ commandResponse, isOpen = true } = {}) {
+async function collectAsync(iterable) {
+    const values = [];
+    for await (const value of iterable) {
+        values.push(value);
+    }
+    return values;
+}
+
+function createFakeClient({ commandResponse, isOpen = true, scanPages = [] } = {}) {
     const listeners = new Map();
     const calls = [];
 
@@ -68,6 +76,12 @@ function createFakeClient({ commandResponse, isOpen = true } = {}) {
         async *hScanIterator(key) {
             const reply = await this.sendCommand(["HSCAN", key, "0"]);
             yield reply.args[1];
+        },
+        async *scanIterator(options) {
+            calls.push({ scanOptions: options });
+            for (const page of scanPages) {
+                yield page;
+            }
         },
         namespaceSnapshot() {
             return this.namespace;
@@ -508,6 +522,87 @@ test("scoped and raw async iterators restore their namespace context for every p
     assert.deepEqual(calls[0].args, ["COMMAND"]);
     assert.deepEqual(calls[1].args, ["HSCAN", "alpha:hash", "0"]);
     assert.deepEqual(calls[2].args, ["HSCAN", "hash", "0"]);
+});
+
+test("scanNamespaceIterator constrains MATCH and yields logical string keys", async () => {
+    const options = { MATCH: "team:[ab]?*", COUNT: 25, TYPE: "string" };
+    const { client, calls } = createFakeClient({
+        scanPages: [["alpha:team:a1", "alpha:team:b2"], ["alpha:team:alpha:a3"]],
+    });
+
+    attachNamespace(client, "global");
+    const pages = [];
+    for await (const page of client.withNamespace("alpha").scanNamespaceIterator(options)) {
+        pages.push(page);
+    }
+
+    assert.deepEqual(pages, [["team:a1", "team:b2"], ["team:alpha:a3"]]);
+    assert.deepEqual(calls, [
+        {
+            scanOptions: {
+                MATCH: "alpha:team:[ab]?*",
+                COUNT: 25,
+                TYPE: "string",
+            },
+        },
+    ]);
+    assert.deepEqual(options, { MATCH: "team:[ab]?*", COUNT: 25, TYPE: "string" });
+});
+
+test("scanNamespaceIterator preserves Buffer keys and Buffer glob patterns", async () => {
+    const match = Buffer.from("binary:*");
+    const { client, calls } = createFakeClient({
+        scanPages: [[Buffer.from("alpha:binary:one"), Buffer.from("alpha:binary:alpha:two")]],
+    });
+
+    attachNamespace(client, "global");
+    const [page] = await collectAsync(
+        client.withNamespace("alpha").scanNamespaceIterator({ MATCH: match }),
+    );
+
+    assert.equal(Buffer.isBuffer(page[0]), true);
+    assert.equal(page[0].equals(Buffer.from("binary:one")), true);
+    assert.equal(page[1].equals(Buffer.from("binary:alpha:two")), true);
+    assert.equal(calls[0].scanOptions.MATCH.equals(Buffer.from("alpha:binary:*")), true);
+    assert.equal(match.equals(Buffer.from("binary:*")), true);
+});
+
+test("scanNamespaceIterator requires a namespace and fails closed on mismatched replies", async () => {
+    const unscoped = createFakeClient();
+    attachNamespace(unscoped.client);
+
+    assert.throws(() => unscoped.client.scanNamespaceIterator(), {
+        code: "REDIS_NAMESPACE_REQUIRED",
+        message: "Redis scanNamespaceIterator requires an active namespace",
+    });
+    assert.throws(() => unscoped.client.raw.scanNamespaceIterator(), {
+        code: "REDIS_NAMESPACE_REQUIRED",
+        message: "Redis scanNamespaceIterator requires an active namespace",
+    });
+
+    const mismatched = createFakeClient({ scanPages: [["beta:secret"]] });
+    attachNamespace(mismatched.client, "alpha");
+    await assert.rejects(async () => collectAsync(mismatched.client.scanNamespaceIterator()), {
+        code: "REDIS_NAMESPACE_SCAN_MISMATCH",
+        message: "Redis namespace scan returned a key outside the active namespace",
+    });
+});
+
+test("scanNamespaceIterator validates options and uses a namespace-only default glob", async () => {
+    const { client, calls } = createFakeClient({ scanPages: [[]] });
+    attachNamespace(client, "alpha");
+
+    assert.throws(() => client.scanNamespaceIterator(null), {
+        name: "TypeError",
+        message: "options must be an object",
+    });
+    assert.throws(() => client.scanNamespaceIterator({ MATCH: 42 }), {
+        name: "TypeError",
+        message: "options.MATCH must be a string or Buffer",
+    });
+
+    assert.deepEqual(await collectAsync(client.scanNamespaceIterator()), [[]]);
+    assert.deepEqual(calls[0].scanOptions, { MATCH: "alpha:*" });
 });
 
 test("methods invoked through scoped and raw clients observe their active namespace", () => {

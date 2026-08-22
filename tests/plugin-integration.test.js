@@ -262,6 +262,18 @@ test("plugin connects to Redis and supports command round trips", async (t) => {
     assert.equal(await fastify.redis.raw.get(`beta:${logicalSharedKey}`), "b");
     assert.equal(fastify.redis.namespace, undefined);
 
+    const scanKeys = [`${key}:scan:one`, `${key}:scan:two`];
+    await tenantA.mSet({ [scanKeys[0]]: "1", [scanKeys[1]]: "2" });
+    await tenantB.set(`${key}:scan:other-tenant`, "3");
+    const scannedLogicalKeys = [];
+    for await (const page of tenantA.scanNamespaceIterator({
+        MATCH: `${key}:scan:*`,
+        COUNT: 100,
+    })) {
+        scannedLogicalKeys.push(...page);
+    }
+    assert.deepEqual(scannedLogicalKeys.sort(), scanKeys.sort());
+
     const alreadyPrefixedLogicalKey = `alpha:${key}:logical`;
     await tenantA.set(alreadyPrefixedLogicalKey, "still-logical");
     assert.equal(await tenantA.get(alreadyPrefixedLogicalKey), "still-logical");

@@ -119,6 +119,29 @@ function namespaceUnsafeCommandError(command, reason = "uses movable keys") {
 }
 
 /**
+ * Creates an Error indicating that an operation requires an active namespace.
+ * @param {string} operation - Namespace-only operation name.
+ * @returns {Error} Error with code REDIS_NAMESPACE_REQUIRED.
+ */
+function namespaceRequiredError(operation) {
+    const error = new Error(`Redis ${operation} requires an active namespace`);
+    error.code = "REDIS_NAMESPACE_REQUIRED";
+    return error;
+}
+
+/**
+ * Creates an Error when Redis returns a key outside the namespace-constrained
+ * SCAN pattern. Failing closed prevents a malformed client reply from exposing
+ * a physical/global key through the logical-key iterator.
+ * @returns {Error} Error with code REDIS_NAMESPACE_SCAN_MISMATCH.
+ */
+function namespaceScanMismatchError() {
+    const error = new Error("Redis namespace scan returned a key outside the active namespace");
+    error.code = "REDIS_NAMESPACE_SCAN_MISMATCH";
+    return error;
+}
+
+/**
  * Probes a node-redis client to determine how generated command methods
  * dispatch internally. Returns whether sendCommand on the public client is
  * the canonical path, or whether an internal _self must also be intercepted.
@@ -483,6 +506,90 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         return { prefix: namespacePrefix, prefixBuffer: namespacePrefixBuffer };
     }
 
+    /**
+     * Builds a physical Redis MATCH pattern by prepending the active namespace
+     * prefix to a logical string or Buffer glob.
+     * @param {string|Buffer|undefined} match - Logical Redis glob.
+     * @param {string} activePrefix - Active string namespace prefix.
+     * @param {Buffer} activePrefixBuffer - Active Buffer namespace prefix.
+     * @returns {string|Buffer} Physical Redis glob constrained to the namespace.
+     */
+    function namespaceScanMatch(match, activePrefix, activePrefixBuffer) {
+        if (match === undefined) {
+            return `${activePrefix}*`;
+        }
+        if (typeof match === "string") {
+            return `${activePrefix}${match}`;
+        }
+        if (Buffer.isBuffer(match)) {
+            return Buffer.concat([activePrefixBuffer, match]);
+        }
+        throw new TypeError("options.MATCH must be a string or Buffer");
+    }
+
+    /**
+     * Removes exactly one active namespace prefix from a physical SCAN key.
+     * String and Buffer reply mappings are preserved.
+     * @param {string|Buffer} key - Physical Redis key returned by SCAN.
+     * @param {string} activePrefix - Active string namespace prefix.
+     * @param {Buffer} activePrefixBuffer - Active Buffer namespace prefix.
+     * @returns {string|Buffer} Logical key.
+     */
+    function namespaceScanLogicalKey(key, activePrefix, activePrefixBuffer) {
+        if (typeof key === "string" && key.startsWith(activePrefix)) {
+            return key.slice(activePrefix.length);
+        }
+        if (
+            Buffer.isBuffer(key) &&
+            key.length >= activePrefixBuffer.length &&
+            key.subarray(0, activePrefixBuffer.length).equals(activePrefixBuffer)
+        ) {
+            return key.subarray(activePrefixBuffer.length);
+        }
+        throw namespaceScanMismatchError();
+    }
+
+    /**
+     * Iterates only keys in the active namespace. The raw/global SCAN iterator
+     * remains unchanged; this helper constrains MATCH to the physical prefix and
+     * yields logical keys with exactly one prefix removed.
+     * @param {object} [options] - node-redis SCAN iterator options.
+     * @param {string|Buffer} [options.MATCH] - Logical Redis glob.
+     * @param {number} [options.COUNT] - Redis COUNT hint.
+     * @param {string|Buffer} [options.TYPE] - Redis TYPE filter.
+     * @param {string|Buffer} [options.cursor] - Initial SCAN cursor.
+     * @returns {AsyncGenerator<Array<string|Buffer>>} Logical key pages.
+     */
+    function scanNamespaceIterator(options = {}) {
+        if (!options || typeof options !== "object" || Array.isArray(options)) {
+            throw new TypeError("options must be an object");
+        }
+
+        const invocationContext = captureNamespaceInvocationContext();
+        const { prefix: activePrefix, prefixBuffer: activePrefixBuffer } =
+            activePrefixForInvocationContext(invocationContext);
+        if (!activePrefix || !activePrefixBuffer) {
+            throw namespaceRequiredError("scanNamespaceIterator");
+        }
+
+        const physicalOptions = {
+            ...options,
+            MATCH: namespaceScanMatch(options.MATCH, activePrefix, activePrefixBuffer),
+        };
+        const physicalIterator = rawClientProxy.scanIterator(physicalOptions);
+
+        return (async function* scanLogicalKeys() {
+            for await (const page of physicalIterator) {
+                if (!Array.isArray(page)) {
+                    throw new TypeError("Redis scanIterator must yield arrays of keys");
+                }
+                yield page.map((key) =>
+                    namespaceScanLogicalKey(key, activePrefix, activePrefixBuffer),
+                );
+            }
+        })();
+    }
+
     async function loadCommandSpecs(forceRefresh = false) {
         if (forceRefresh && loadingSpecsPromise) {
             await loadingSpecsPromise;
@@ -763,6 +870,12 @@ export function attachNamespace(client, initialNamespace, options = {}) {
         configurable: true,
         enumerable: false,
         value: registerNamespaceCommands,
+    });
+
+    Object.defineProperty(client, "scanNamespaceIterator", {
+        configurable: true,
+        enumerable: false,
+        value: scanNamespaceIterator,
     });
 
     Object.defineProperty(client, "raw", {

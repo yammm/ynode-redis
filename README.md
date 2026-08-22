@@ -134,7 +134,17 @@ await rawTransaction.exec(); // operates on literal "status"
 
 Hash, set, and sorted-set scan iterators retain the scope of the client that creates them. Logical keys are always prefixed, even when they already begin with the namespace text; use `raw` when you intentionally have a physical Redis key.
 
-Namespacing is a key-rewriting convenience, not an authorization boundary. Database-wide commands such as `SCAN`, `KEYS`, and `RANDOMKEY` operate on the physical database and are not tenant-filtered. A client returned by `duplicate()` is also independent and is not namespaced or closed by this plugin. Use Redis ACLs or separate databases/instances when hostile tenants must be isolated.
+Namespacing is a key-rewriting convenience, not an authorization boundary. Database-wide commands such as `SCAN`, `KEYS`, and `RANDOMKEY` operate on the physical database and are not tenant-filtered. The raw/global `scanIterator()` behavior is intentionally unchanged. For an application-level inventory of one active namespace, use `scanNamespaceIterator()`: it prepends the active prefix to the logical `MATCH` glob, scans only that prefix, and yields logical keys with exactly one prefix removed. It requires an active namespace and preserves string or Buffer key replies.
+
+```js
+const tenant = fastify.redis.withNamespace("klingon");
+
+for await (const keys of tenant.scanNamespaceIterator({ MATCH: "session:*", COUNT: 100 })) {
+    await tenant.mGet(keys);
+}
+```
+
+A client returned directly by node-redis `duplicate()` is independent and is not namespaced or closed by this plugin. Use the lifecycle-managed client helpers below when the duplicate belongs to the Fastify application. Redis ACLs or separate databases/instances remain necessary when hostile tenants must be isolated.
 
 Pub/sub channels are not Redis keys and cannot be prefixed transparently without changing application protocols. `PUBLISH`, `SUBSCRIBE`, `PUBSUB`, and their sharded and pattern variants therefore require `client.raw` whenever a namespace is active. Channel names remain global: include the tenant in the channel name yourself when tenant-scoped messaging is required.
 
