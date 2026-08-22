@@ -1,0 +1,13 @@
+{
+    "compilerOptions": {
+        "exactOptionalPropertyTypes": true,
+        "module": "NodeNext",
+        "noEmit": true,
+        "noUncheckedIndexedAccess": true,
+        "strict": true,
+        "target": "ES2022",
+        "types": ["node"],
+        "verbatimModuleSyntax": true
+    },
+    "files": ["./redis.ts"]
+}

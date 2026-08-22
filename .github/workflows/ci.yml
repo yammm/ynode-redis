@@ -45,7 +45,7 @@ jobs:
               run: npm ci
 
             - name: Run format, lint, and tests
-              run: npm run format:check && npm run lint && npm test
+              run: npm run format:check && npm run lint && npm test && npm run test:types
 
     docs:
         runs-on: ubuntu-latest
