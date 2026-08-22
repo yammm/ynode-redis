@@ -38,6 +38,11 @@ function startupTimeoutError(timeoutMs) {
  * Best-effort teardown of a Redis client after a startup timeout. Tries
  * destroy, disconnect, close, and quit in order, stopping at the first
  * available method.
+ *
+ * The order is intentionally the reverse of closeClient() in connection.js:
+ * a timed-out startup wants the most forceful teardown available (destroy
+ * the socket first), while a graceful shutdown prefers the politest close
+ * path first.
  * @param {object} client - Redis client instance.
  */
 async function abortStartup(client) {
