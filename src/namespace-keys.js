@@ -426,7 +426,9 @@ function keyIndexesForStreamRead(command, args) {
             return Array.from({ length: keyCount }, (_, offset) => firstKeyIndex + offset);
         }
 
-        if (token === "COUNT" || token === "BLOCK" || token === "CLAIM") {
+        // COUNT and BLOCK are the only valued options before STREAMS; NOACK
+        // (XREADGROUP) is a bare token handled by the single-step advance.
+        if (token === "COUNT" || token === "BLOCK") {
             index += 2;
             continue;
         }

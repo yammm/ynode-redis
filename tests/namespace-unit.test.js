@@ -897,6 +897,58 @@ test("database-wide destructive commands fail closed on namespaced clients", asy
     );
 });
 
+test("xread option tokens are skipped without consuming stream keys", async () => {
+    const { client, calls } = createFakeClient({ commandResponse: [] });
+
+    attachNamespace(client, "alpha");
+
+    await client.sendCommand([
+        "XREAD",
+        "COUNT",
+        "5",
+        "BLOCK",
+        "100",
+        "STREAMS",
+        "orders",
+        "events",
+        "0",
+        "0",
+    ]);
+    await client.sendCommand([
+        "XREADGROUP",
+        "GROUP",
+        "workers",
+        "consumer-1",
+        "NOACK",
+        "STREAMS",
+        "orders",
+        ">",
+    ]);
+
+    assert.deepEqual(calls[1].args, [
+        "XREAD",
+        "COUNT",
+        "5",
+        "BLOCK",
+        "100",
+        "STREAMS",
+        "alpha:orders",
+        "alpha:events",
+        "0",
+        "0",
+    ]);
+    assert.deepEqual(calls[2].args, [
+        "XREADGROUP",
+        "GROUP",
+        "workers",
+        "consumer-1",
+        "NOACK",
+        "STREAMS",
+        "alpha:orders",
+        ">",
+    ]);
+});
+
 test("unsupported server-discovered movable-key commands fail closed", async () => {
     const { client, calls } = createFakeClient({
         commandResponse: [["futuremove", -2, ["write", "movablekeys"], 0, 0, 0]],
