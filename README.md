@@ -16,6 +16,10 @@ A lightweight **Fastify** plugin that exposes a primary **node‑redis** client 
 
 > If you are looking for the ioredis‑based plugin, see [`@fastify/redis`](https://github.com/fastify/fastify-redis).
 
+## Node.js support
+
+This package requires Node.js 20.19.0 or newer. CI exercises the exact 20.19.0, 22.13.0, and 24.0.0 boundaries. Node.js 20 remains tested only to preserve the current major-version contract even though upstream support has ended; use Node.js 22 or 24 for supported production deployments. A newly released Node.js major is not considered supported until it is added to CI, even when the open `engines` range admits it.
+
 ## Installation
 
 Requires Node.js 20 or newer, Fastify 5, node-redis 6, and Redis server 7.2 or newer. Install the package and its Redis peer dependency:
