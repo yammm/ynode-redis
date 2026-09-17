@@ -478,6 +478,40 @@ test("plugin keeps plugin-only options out of node-redis configuration", async (
     await hooks.get("onClose")();
 });
 
+test("namespaced startup and ready events read metadata without weakening command guards", async (t) => {
+    const redis = await startRedis();
+    if (!redis) {
+        t.skip("No REDIS_URL provided or local redis-server cannot be started in this environment");
+        return;
+    }
+    const { fastify, hooks, logs } = createFastifyHarness();
+    t.after(async () => {
+        await hooks.get("onClose")?.();
+        await redis.stop();
+    });
+
+    await redisPlugin(fastify, {
+        url: redis.url,
+        namespace: "startup-test",
+        name: "namespaced-startup-test",
+    });
+    await hooks.get("onReady")();
+    assert.equal(logs.info.length, 1);
+    assert.match(logs.info[0][0], /ready to use \[\d+\]/);
+
+    await fastify.redis.set("scoped-key", "scoped-value");
+    assert.equal(await fastify.redis.raw.get("startup-test:scoped-key"), "scoped-value");
+    assert.equal(await fastify.redis.raw.get("scoped-key"), null);
+    await assert.rejects(async () => fastify.redis.sendCommand(["CLIENT", "INFO"]), {
+        code: "REDIS_NAMESPACE_UNSAFE_COMMAND",
+    });
+
+    fastify.redis.emit("ready");
+    await waitForAssertion(() => assert.equal(logs.info.length, 2));
+    assert.equal(logs.trace.length, 0);
+    assert.equal(fastify.redis.namespace, "startup-test");
+});
+
 test("plugin startup fails fast when Redis is unreachable", async () => {
     const { fastify, hooks } = createFastifyHarness();
     await redisPlugin(fastify, {

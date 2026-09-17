@@ -1,10 +1,11 @@
 /**
  * Retrieves and parses CLIENT INFO from the Redis server into a key-value object.
- * @param {object} client - Redis client with a sendCommand method.
+ * @param {object} client - Redis client with a sendCommand method and optional raw transport.
  * @returns {Promise<Record<string, string>>} Parsed info key-value pairs.
  */
 export async function clientInfo(client) {
-    const info = await client.sendCommand(["CLIENT", "INFO"]);
+    // Connection metadata is not a key operation; keep CLIENT blocked on scoped clients.
+    const info = await (client.raw ?? client).sendCommand(["CLIENT", "INFO"]);
 
     // Guard against Buffer or non-string responses from certain Redis client configurations
     const raw = Buffer.isBuffer(info)
